@@ -1,5 +1,5 @@
 """Config flow for Pylontech Serial integration."""
-import serial.tools.list_ports
+import serialx
 import voluptuous as vol
 
 from homeassistant import config_entries
@@ -32,10 +32,10 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 return await self.async_step_manual_path()
             return self.async_create_entry(title="Pylontech Battery", data=user_input)
 
-        ports = await self.hass.async_add_executor_job(serial.tools.list_ports.comports)
+        ports = await self.hass.async_add_executor_job(serialx.list_serial_ports)
         list_of_ports = {}
         for port in ports:
-            list_of_ports[port.device] = f"{port.device} - {port.description}"
+            list_of_ports[port.device] = f"{port.device} - {port.product or port.device}"
 
         if usb_device and usb_device not in list_of_ports:
             list_of_ports[usb_device] = usb_device
@@ -94,10 +94,10 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
                 return await self.async_step_manual_path()
             return self.async_create_entry(title="", data=user_input)
 
-        ports = await self.hass.async_add_executor_job(serial.tools.list_ports.comports)
+        ports = await self.hass.async_add_executor_job(serialx.list_serial_ports)
         list_of_ports = {}
         for port in ports:
-            list_of_ports[port.device] = f"{port.device} - {port.description}"
+            list_of_ports[port.device] = f"{port.device} - {port.product or port.device}"
         
         # Ensure current port is in list (even if not currently connected/detected, to avoid validation error if user doesn't want to change it but it's offline)
         if current_port is not None and current_port not in list_of_ports:

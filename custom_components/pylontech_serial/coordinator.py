@@ -1,6 +1,6 @@
 """DataUpdateCoordinator for Pylontech Serial."""
 import logging
-import serial
+import serialx
 import time
 import threading
 from datetime import datetime, timedelta
@@ -41,7 +41,7 @@ class PylontechCoordinator(DataUpdateCoordinator):
     def _open_serial(self):
         if self.serial is None:
             _LOGGER.debug(f"Opening serial port {self.port} at {self.baud_rate}")
-            self.serial = serial.Serial(self.port, self.baud_rate, timeout=2)
+            self.serial = serialx.serial_for_url(self.port, baudrate=self.baud_rate, read_timeout=2)
         elif not self.serial.is_open:
              self.serial.open()
 
@@ -67,7 +67,7 @@ class PylontechCoordinator(DataUpdateCoordinator):
         with self._lock:
             try:
                 self._open_serial()
-                self.serial.reset_input_buffer()
+                self.serial.reset_read_buffer()
                 self.serial.write(b"\n")
                 time.sleep(0.1)
                 self.serial.read_all()
@@ -106,7 +106,7 @@ class PylontechCoordinator(DataUpdateCoordinator):
             try:
                 self._open_serial()
                 
-                self.serial.reset_input_buffer()
+                self.serial.reset_read_buffer()
                 self.serial.write(b"\n")
                 time.sleep(0.1)
                 self.serial.read_all()
@@ -181,7 +181,7 @@ class PylontechCoordinator(DataUpdateCoordinator):
 
                 return system
 
-            except serial.SerialException as e:
+            except (OSError, serialx.SerialException) as e:
                 self._close_serial()
                 raise UpdateFailed(f"Serial Error: {e}")
             except UpdateFailed:
@@ -216,7 +216,7 @@ class PylontechCoordinator(DataUpdateCoordinator):
         with self._lock:
             try:
                 self._open_serial()
-                self.serial.reset_input_buffer()
+                self.serial.reset_read_buffer()
                 self.serial.write(b"\n")
                 
                 cmd_bytes = command.encode("ascii") + b"\n"
