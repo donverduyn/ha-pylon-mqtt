@@ -10,10 +10,20 @@ Connect your Pylontech US2000/US3000 battery stack directly to Home Assistant us
 - **Energy Dashboard Ready**: Includes calculated Energy (kWh) sensors for proper dashboard Integration.
 - **Per-Battery Monitoring**: Voltage, Current, SOC, Temperature, and Status for each module.
 
+> [!WARNING]
+> **Disclaimer:** This integration interacts directly with your hardware. Incorrect configuration or usage could potentially cause damage to your batteries or connected devices. The creators and contributors of this integration take **no responsibility** for any damage, data loss, or other issues that may arise from using this software. Use at your own risk.
+
+> [!IMPORTANT]
+> This integration is not affiliated with or endorsed by Pylontech.
+> It is a completely independent project, backed up by the community, and based on official documentation, commands, and reverse engineering.
+
 > [!NOTE]
 > **USB Auto-Discovery**: Currently, **only** the Prolic PL2303 scanner (VID `067B`, PID `2303`) is supported for auto-discovery. If you have a different adapter, it will not be automatically detected, but you can still manually select the port during configuration.
 >
 > To add auto-discovery support for your device, please see [CONTRIBUTING.md](CONTRIBUTING.md).
+
+> [!NOTE]
+> **Disclaimer:** this project has been generated mainly by AI. Even though it has been reviewed and tested by a professional programmer, I feel like it's important to disclose this fact.
 
 ## Installation
 
