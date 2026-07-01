@@ -2,3 +2,15 @@
 testpaths   = ["tests"]
 pythonpath  = ["tests"]          # makes `from conftest import ...` work in test files
 addopts     = "-v --tb=short"
+
+[tool.ruff]
+line-length = 120
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP"]
+ignore = ["E501"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
