@@ -155,9 +155,19 @@ _PROMPT = b"\r\npylon>"
 _JUST_PROMPT = b"\r\npylon>"
 
 
-def _wrap(cmd_echo: str, body: str) -> bytes:
-    """Wrap body in the standard BMS response envelope."""
-    text = f"{cmd_echo}\n\r@\r\r\n{body}\r\nCommand completed successfully\r\n\r$$\r\n\rpylon>"
+def _wrap(cmd_echo: str, body: str, kv: bool = False) -> bytes:
+    """Wrap body in the standard BMS response envelope.
+
+    The real device emits two different byte sequences immediately after '@\r':
+      kv=False (table commands – pwr, stat, bat, soh, help):  @\r  +  \r\n
+      kv=True  (kv commands  – info, time):                   @\r  +  \n\r
+
+    Combined with the leading @\r that is part of the format string:
+      table  →  @\r\r\n  (CR CR LF)
+      kv     →  @\r\n\r  (CR LF CR)
+    """
+    after = "\n\r" if kv else "\r\n"
+    text = f"{cmd_echo}\n\r@\r{after}{body}\r\n\rCommand completed successfully\r\n\r$$\r\n\rpylon>"
     return text.encode("ascii", errors="replace")
 
 
@@ -211,7 +221,7 @@ def _resp_info(cmd: str) -> bytes:
         f"EPONPort rate       : 1200\r\n\r"
         f"Console Port rate   : 115200"
     )
-    return _wrap(cmd, body)
+    return _wrap(cmd, body, kv=True)
 
 
 def _resp_stat(cmd: str) -> bytes:
@@ -275,9 +285,9 @@ def _resp_time(cmd: str) -> bytes:
     parts = cmd.split()
     if len(parts) > 1:
         # time YY MM DD HH MM SS  → set command, acknowledge only
-        return _wrap(cmd, "")
+        return _wrap(cmd, "", kv=True)
     now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    return _wrap(cmd, f"Ds3231 {now}")
+    return _wrap(cmd, f"Ds3231 {now}", kv=True)
 
 
 def _resp_bat(cmd: str) -> bytes:
@@ -287,8 +297,8 @@ def _resp_bat(cmd: str) -> bytes:
     m = MODELS[_cfg["model"]]
     cells = m["cells"]
     cap = m["cap_mah"] // cells
-    st = "Charge" if s["charging"] else "Discharge"
-    curr_per_cell = abs(s["current"]) // cells
+    st = "Charge" if s["charging"] else "Dischg"
+    curr_per_cell = s["current"] // cells
 
     header = (
         "Battery  Volt     Curr     Tempr    "
@@ -333,10 +343,12 @@ def _resp_help(cmd: str) -> bytes:
         "login    Login Admin mode - login [password]\r\n\r"
         "logout   user mode  - logout\r\n\r"
         "pwr      Power data show - pwr [index]\r\n\r"
+        "shut     Shut down - shut\r\n\r"
         "soh      State of health - soh [addr]\r\n\r"
         "stat     Statistic data show - stat\r\n\r"
         "time     Time - time [year] [month] [day] [hour] [minute] [second]\r\n\r"
         "trst     Test Soft Reset - trst\r\n\r"
+        "updata   updata system - updata\r\n\r"
         "**********************************************************"
     )
     return _wrap(cmd, body)
