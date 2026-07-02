@@ -4,8 +4,8 @@ These tests instantiate entity objects directly (without going through HA's
 config-entry loader) to give precise coverage of the value-reading paths that
 are the primary output users see in the dashboard.
 """
+
 import pytest
-from homeassistant.components.sensor import SensorEntityDescription
 from homeassistant.core import HomeAssistant
 
 from custom_components.pylontech_mqtt.const import DOMAIN
@@ -90,7 +90,9 @@ def _sys(coord: PylontechCoordinator, key: str) -> PylontechSystemSensor:
     return PylontechSystemSensor(coord, "entry_id", desc)
 
 
-def _bat(coord: PylontechCoordinator, key: str, bat_id: int = 1) -> PylontechBatterySensor:
+def _bat(
+    coord: PylontechCoordinator, key: str, bat_id: int = 1
+) -> PylontechBatterySensor:
     desc = next(d for d in BATTERY_SENSORS if d.key == key)
     return PylontechBatterySensor(coord, "entry_id", bat_id, desc)
 
@@ -123,10 +125,14 @@ class TestSystemSensorNativeValue:
     async def test_soc(self, coord_with_data: PylontechCoordinator) -> None:
         assert _sys(coord_with_data, "soc").native_value == 80.0
 
-    async def test_optional_string_field(self, coord_with_data: PylontechCoordinator) -> None:
+    async def test_optional_string_field(
+        self, coord_with_data: PylontechCoordinator
+    ) -> None:
         assert _sys(coord_with_data, "spec").native_value == "48V/100AH"
 
-    async def test_absent_stat_field_is_none(self, coord_with_data: PylontechCoordinator) -> None:
+    async def test_absent_stat_field_is_none(
+        self, coord_with_data: PylontechCoordinator
+    ) -> None:
         """cycles is not in _PAYLOAD → stays None."""
         assert _sys(coord_with_data, "cycles").native_value is None
 
@@ -149,11 +155,17 @@ class TestBatterySensorNativeValue:
     async def test_status_string(self, coord_with_data: PylontechCoordinator) -> None:
         assert _bat(coord_with_data, "status").native_value == "Charge"
 
-    async def test_energy_stored_computed(self, coord_with_data: PylontechCoordinator) -> None:
+    async def test_energy_stored_computed(
+        self, coord_with_data: PylontechCoordinator
+    ) -> None:
         """energy_stored = spec-derived capacity(4.8 kWh for 48V/100AH) × soc(80%) = 3.84 kWh."""
-        assert _bat(coord_with_data, "energy_stored").native_value == pytest.approx(3.84, rel=1e-3)
+        assert _bat(coord_with_data, "energy_stored").native_value == pytest.approx(
+            3.84, rel=1e-3
+        )
 
-    async def test_missing_battery_id_returns_none(self, coord_with_data: PylontechCoordinator) -> None:
+    async def test_missing_battery_id_returns_none(
+        self, coord_with_data: PylontechCoordinator
+    ) -> None:
         assert _bat(coord_with_data, "voltage", bat_id=99).native_value is None
 
 
@@ -175,10 +187,14 @@ class TestCellSensorNativeValue:
     async def test_cell_base_state(self, coord_with_data: PylontechCoordinator) -> None:
         assert _cell(coord_with_data, "base_state").native_value == "Charge"
 
-    async def test_missing_cell_id_returns_none(self, coord_with_data: PylontechCoordinator) -> None:
+    async def test_missing_cell_id_returns_none(
+        self, coord_with_data: PylontechCoordinator
+    ) -> None:
         assert _cell(coord_with_data, "voltage", cell_id=99).native_value is None
 
-    async def test_missing_battery_id_returns_none(self, coord_with_data: PylontechCoordinator) -> None:
+    async def test_missing_battery_id_returns_none(
+        self, coord_with_data: PylontechCoordinator
+    ) -> None:
         assert _cell(coord_with_data, "voltage", bat_id=99).native_value is None
 
 
@@ -190,41 +206,69 @@ class TestCellSensorNativeValue:
 class TestDeviceInfo:
     # --- system-level device ---
 
-    async def test_system_identifier(self, coord_with_data: PylontechCoordinator) -> None:
-        assert (DOMAIN, "system") in _sys(coord_with_data, "voltage").device_info["identifiers"]
+    async def test_system_identifier(
+        self, coord_with_data: PylontechCoordinator
+    ) -> None:
+        assert (DOMAIN, "system") in _sys(coord_with_data, "voltage").device_info[
+            "identifiers"
+        ]
 
     async def test_system_name(self, coord_with_data: PylontechCoordinator) -> None:
         assert _sys(coord_with_data, "voltage").device_info["name"] == "Pylontech Stack"
 
-    async def test_system_manufacturer_from_data(self, coord_with_data: PylontechCoordinator) -> None:
+    async def test_system_manufacturer_from_data(
+        self, coord_with_data: PylontechCoordinator
+    ) -> None:
         assert _sys(coord_with_data, "voltage").device_info["manufacturer"] == "Pylon"
 
-    async def test_system_manufacturer_fallback_when_no_data(self, coord: PylontechCoordinator) -> None:
+    async def test_system_manufacturer_fallback_when_no_data(
+        self, coord: PylontechCoordinator
+    ) -> None:
         assert _sys(coord, "voltage").device_info["manufacturer"] == "Pylontech"
 
-    async def test_system_no_via_device(self, coord_with_data: PylontechCoordinator) -> None:
+    async def test_system_no_via_device(
+        self, coord_with_data: PylontechCoordinator
+    ) -> None:
         """System is the root device — no via_device link."""
         assert "via_device" not in _sys(coord_with_data, "voltage").device_info
 
     # --- battery-module device ---
 
-    async def test_battery_identifier(self, coord_with_data: PylontechCoordinator) -> None:
-        assert (DOMAIN, "battery_1") in _bat(coord_with_data, "voltage").device_info["identifiers"]
+    async def test_battery_identifier(
+        self, coord_with_data: PylontechCoordinator
+    ) -> None:
+        assert (DOMAIN, "battery_1") in _bat(coord_with_data, "voltage").device_info[
+            "identifiers"
+        ]
 
-    async def test_battery_name_includes_id(self, coord_with_data: PylontechCoordinator) -> None:
-        assert _bat(coord_with_data, "voltage", bat_id=3).device_info["name"] == "Pylontech Module 3"
+    async def test_battery_name_includes_id(
+        self, coord_with_data: PylontechCoordinator
+    ) -> None:
+        assert (
+            _bat(coord_with_data, "voltage", bat_id=3).device_info["name"]
+            == "Pylontech Module 3"
+        )
 
-    async def test_battery_via_device_links_to_system(self, coord_with_data: PylontechCoordinator) -> None:
-        assert _bat(coord_with_data, "voltage").device_info["via_device"] == (DOMAIN, "system")
+    async def test_battery_via_device_links_to_system(
+        self, coord_with_data: PylontechCoordinator
+    ) -> None:
+        assert _bat(coord_with_data, "voltage").device_info["via_device"] == (
+            DOMAIN,
+            "system",
+        )
 
     # --- cell entity uses parent battery device ---
 
-    async def test_cell_uses_battery_identifiers(self, coord_with_data: PylontechCoordinator) -> None:
+    async def test_cell_uses_battery_identifiers(
+        self, coord_with_data: PylontechCoordinator
+    ) -> None:
         """Cells attach to their parent battery device, not a separate device."""
         assert (
             _cell(coord_with_data, "voltage").device_info["identifiers"]
             == _bat(coord_with_data, "voltage").device_info["identifiers"]
         )
 
-    async def test_cell_entity_name_includes_cell_id(self, coord_with_data: PylontechCoordinator) -> None:
+    async def test_cell_entity_name_includes_cell_id(
+        self, coord_with_data: PylontechCoordinator
+    ) -> None:
         assert _cell(coord_with_data, "voltage").name == "Cell 0 Voltage"
