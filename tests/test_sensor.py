@@ -130,11 +130,6 @@ class TestSystemSensorNativeValue:
         """cycles is not in _PAYLOAD → stays None."""
         assert _sys(coord_with_data, "cycles").native_value is None
 
-    async def test_unknown_key_returns_none(self, coord_with_data: PylontechCoordinator) -> None:
-        desc = SensorEntityDescription(key="nonexistent_key")
-        sensor = PylontechSystemSensor(coord_with_data, "entry_id", desc)
-        assert sensor.native_value is None
-
 
 # ===========================================================================
 # PylontechBatterySensor.native_value

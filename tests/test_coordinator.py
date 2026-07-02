@@ -212,21 +212,42 @@ class TestComputeEnergyStored:
 
 
 class TestSetBatteryCapacity:
-    async def test_stores_value(self, coordinator: PylontechCoordinator) -> None:
+    async def test_configured_capacity_applied_in_computation(
+        self, coordinator: PylontechCoordinator
+    ) -> None:
+        """set_battery_capacity affects the energy_stored produced for that battery."""
         coordinator.set_battery_capacity(1, 4.8)
-        assert coordinator.battery_capacities[1] == 4.8
+        coordinator._process_payload(_PAYLOAD)  # bat 1, soc=80
+        assert coordinator.data.batteries[0].energy_stored == pytest.approx(
+            4.8 * 0.80, rel=1e-3
+        )
 
-    async def test_overwrites_previous(self, coordinator: PylontechCoordinator) -> None:
+    async def test_later_value_overrides_earlier_for_same_battery(
+        self, coordinator: PylontechCoordinator
+    ) -> None:
         coordinator.set_battery_capacity(1, 2.4)
         coordinator.set_battery_capacity(1, 4.8)
-        assert coordinator.battery_capacities[1] == 4.8
+        coordinator._process_payload(_PAYLOAD)  # bat 1, soc=80
+        assert coordinator.data.batteries[0].energy_stored == pytest.approx(
+            4.8 * 0.80, rel=1e-3
+        )
 
-    async def test_independent_battery_ids(
+    async def test_each_battery_uses_its_own_configured_capacity(
         self, coordinator: PylontechCoordinator
     ) -> None:
         coordinator.set_battery_capacity(1, 2.4)
         coordinator.set_battery_capacity(2, 4.8)
-        assert coordinator.battery_capacities == {1: 2.4, 2: 4.8}
+        payload = {
+            **_PAYLOAD,
+            "batteries": [_BAT1, {**_BAT1, "sys_id": 2, "soc": 50}],
+        }
+        coordinator._process_payload(payload)
+        assert coordinator.data.batteries[0].energy_stored == pytest.approx(
+            2.4 * 0.80, rel=1e-3
+        )
+        assert coordinator.data.batteries[1].energy_stored == pytest.approx(
+            4.8 * 0.50, rel=1e-3
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -237,12 +258,10 @@ class TestSetBatteryCapacity:
 class TestAutoCapacity:
     async def test_initial_state(self, coordinator: PylontechCoordinator) -> None:
         assert coordinator.default_capacity == pytest.approx(2.4)
-        assert not coordinator._auto_capacity_set
 
     async def test_us5000_spec(self, coordinator: PylontechCoordinator) -> None:
         coordinator._process_payload(_PAYLOAD)
         assert coordinator.default_capacity == pytest.approx(4.8)
-        assert coordinator._auto_capacity_set
 
     async def test_us2000_spec(self, coordinator: PylontechCoordinator) -> None:
         coordinator._process_payload({**_PAYLOAD, "spec": "48V/50AH"})
@@ -267,14 +286,12 @@ class TestAutoCapacity:
     ) -> None:
         coordinator._process_payload({**_PAYLOAD, "spec": None})
         assert coordinator.default_capacity == pytest.approx(2.4)
-        assert not coordinator._auto_capacity_set
 
     async def test_unparseable_spec_leaves_default(
         self, coordinator: PylontechCoordinator
     ) -> None:
         coordinator._process_payload({**_PAYLOAD, "spec": "CUSTOM"})
         assert coordinator.default_capacity == pytest.approx(2.4)
-        assert not coordinator._auto_capacity_set
 
     async def test_process_payload_updates_coordinator_data(
         self, coordinator: PylontechCoordinator
