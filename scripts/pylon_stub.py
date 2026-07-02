@@ -30,11 +30,20 @@ Implements
   getpwr           alias for pwr
   help             paginated command list
   shut/trst/updata stubs
+  stub [...]       runtime control: fault inject, soc, current (admin mode)
 
 Firmware variants
 -----------------
   old   18 columns — Volt … M.T.St  (pre-Tlow.Id era)
   new   23 columns — adds *.Id columns and SysAlarm.St  (default)
+
+Admin control (after ``login 000000``)
+---------------------------------------
+  stub fault <bat> <ov|uv|ot|ut|oc|absent>  inject fault; affects all views
+  stub clear <bat>                           remove injected fault
+  stub soc <pct>                             set SOC percentage
+  stub current <mA>                          fix current (persists across ticks)
+  stub current auto                          return current to updater control
 """
 
 import argparse
@@ -116,6 +125,7 @@ _state: dict = {
     "life_alarm_times": 0,
     "pwr_coulomb": 153311400,
     "dsg_cap": 21506462,
+    "current_override": None,  # mA; when set the updater skips current; clear with 'stub current auto'
 }
 _state_lock = threading.Lock()
 _admin_mode = False  # toggled by login/logout
@@ -132,21 +142,25 @@ def _state_updater() -> None:
         time.sleep(30)
         with _state_lock:
             s = _state
-            if s["charging"]:
-                s["soc"] = min(100, s["soc"] + 1)
-                s["current"] = random.randint(3000, 5000)
-                if s["soc"] >= 100:
-                    s["charging"] = False
-                    s["current"] = -random.randint(1000, 3000)
-                    s["discharge_cnt"] += 1
-            else:
-                s["soc"] = max(0, s["soc"] - 1)
-                s["current"] = -random.randint(1000, 4000)
-                if s["soc"] <= 10:
-                    s["charging"] = True
+            if s["current_override"] is None:
+                if s["charging"]:
+                    s["soc"] = min(100, s["soc"] + 1)
                     s["current"] = random.randint(3000, 5000)
-                    s["cycles"] += 1
-                    s["charge_times"] += 1
+                    if s["soc"] >= 100:
+                        s["charging"] = False
+                        s["current"] = -random.randint(1000, 3000)
+                        s["discharge_cnt"] += 1
+                else:
+                    s["soc"] = max(0, s["soc"] - 1)
+                    s["current"] = -random.randint(1000, 4000)
+                    if s["soc"] <= 10:
+                        s["charging"] = True
+                        s["current"] = random.randint(3000, 5000)
+                        s["cycles"] += 1
+                        s["charge_times"] += 1
+            else:
+                s["current"] = s["current_override"]
+                s["charging"] = s["current_override"] > 0
             base_mv = 3000 + int(s["soc"] * 6.5)
             s["volt_low"] = base_mv + random.randint(0, 3)
             s["volt_high"] = s["volt_low"] + random.randint(1, 8)
@@ -396,20 +410,38 @@ def _resp_pwr(cmd: str) -> bytes:
                 bv_st = volt_st
                 bt_st = temp_st
                 sys_alarm = "Alarm   " if fault and fault != "absent" else "Normal  "
+                # Raw value overrides — telemetry-driven monitors fire alongside status-string ones
+                dv = s["voltage"]
+                dc = s["current"]
+                dt = s["temperature"]
+                dvl = s["volt_low"]
+                dvh = s["volt_high"]
+                dtl = s["temp_low"]
+                dth = s["temp_high"]
+                if fault == "ov":
+                    dv = 3870 * cells; dvl = 3865; dvh = 3870
+                elif fault == "uv":
+                    dv = 2750 * cells; dvl = 2750; dvh = 2760
+                elif fault == "ot":
+                    dt = 55000; dth = 55000
+                elif fault == "ut":
+                    dt = -10000; dtl = -10000
+                elif fault == "oc":
+                    dc = -150000 if s["current"] < 0 else 150000
 
                 if firmware == "new":
                     rows.append(
-                        f"{bat_id:<6}{s['voltage']:<7}{s['current']:<7}{s['temperature']:<7}"
-                        f"{s['temp_low']:<7}{tlow_id:<8}{s['temp_high']:<7}{thigh_id:<9}"
-                        f"{s['volt_low']:<7}{vlow_id:<9}{s['volt_high']:<7}{vhigh_id:<9}"
+                        f"{bat_id:<6}{dv:<7}{dc:<7}{dt:<7}"
+                        f"{dtl:<7}{tlow_id:<8}{dth:<7}{thigh_id:<9}"
+                        f"{dvl:<7}{vlow_id:<9}{dvh:<7}{vhigh_id:<9}"
                         f"{base_st:<9}{volt_st:<9}{curr_st:<9}{temp_st:<9}"
                         f"{str(s['soc']) + '%':<9}{now}  "
                         f"{bv_st:<9}{bt_st:<9}{mostempr:<10}Normal   {sys_alarm}"
                     )
                 else:
                     rows.append(
-                        f"{bat_id:<6}{s['voltage']:<7}{s['current']:<7}{s['temperature']:<7}"
-                        f"{s['temp_low']:<7}{s['temp_high']:<7}{s['volt_low']:<7}{s['volt_high']:<7}"
+                        f"{bat_id:<6}{dv:<7}{dc:<7}{dt:<7}"
+                        f"{dtl:<7}{dth:<7}{dvl:<7}{dvh:<7}"
                         f"{base_st:<9}{volt_st:<9}{curr_st:<9}{temp_st:<9}"
                         f"{str(s['soc']) + '%':<9}{now}  "
                         f"{bv_st:<9}{bt_st:<9}{mostempr:<10}Normal  "
@@ -544,6 +576,10 @@ def _resp_bat(cmd: str) -> bytes:
     cells = m["cells"]
     cap = m["cap_mah"] // cells
 
+    n_groups = _cfg["groups"]
+    slots_per_group = _cfg["slots"]
+    batt_per_group = _cfg["batteries"]
+
     parts = cmd.split()
     bat_id = 1
     if len(parts) > 1:
@@ -552,8 +588,24 @@ def _resp_bat(cmd: str) -> bytes:
         except ValueError:
             pass
 
+    if bat_id < 1 or bat_id > n_groups * slots_per_group:
+        return _wrap(cmd, f"Battery {bat_id} not found")
+
+    slot_in_group = ((bat_id - 1) % slots_per_group) + 1
+    present = slot_in_group <= batt_per_group
+    fault = _faults.get(bat_id)
+
+    if not present or fault == "absent":
+        return _wrap(cmd, f"Battery {bat_id}\r\r\nAbsent")
+
     st = "Charge" if s["charging"] else "Dischg"
-    pack_curr = s["current"]
+
+    cell_volt_st = "OV" if fault == "ov" else "UV" if fault == "uv" else "Normal"
+    cell_curr_st = "OC" if fault == "oc" else "Normal"
+    cell_temp_st = "OT" if fault == "ot" else "UT" if fault == "ut" else "Normal"
+    pack_curr = (
+        (-150000 if s["current"] < 0 else 150000) if fault == "oc" else s["current"]
+    )
 
     header = (
         "Battery  Volt     Curr     Tempr    "
@@ -562,12 +614,21 @@ def _resp_bat(cmd: str) -> bytes:
     rows: list[str] = []
     rng = random.Random(bat_id)
     for c in range(cells):
-        # Deterministic per-module, per-cell variation; voltage bounded by pack extremes
-        t = s["temperature"] + rng.randint(-800, 800)
-        v = s["volt_low"] + rng.randint(0, max(0, s["volt_high"] - s["volt_low"]))
+        if fault == "ov":
+            v = 3870 + rng.randint(0, 5)
+        elif fault == "uv":
+            v = 2750 + rng.randint(-5, 5)
+        else:
+            v = s["volt_low"] + rng.randint(0, max(0, s["volt_high"] - s["volt_low"]))
+        if fault == "ot":
+            t = 55000 + rng.randint(-500, 500)
+        elif fault == "ut":
+            t = -10000 + rng.randint(-500, 500)
+        else:
+            t = s["temperature"] + rng.randint(-800, 800)
         rows.append(
             f"{c:<9}{v:<9}{pack_curr:<9}{t:<9}"
-            f"{st:<13}Normal       Normal       Normal       "
+            f"{st:<13}{cell_volt_st:<13}{cell_curr_st:<13}{cell_temp_st:<13}"
             f"{str(s['soc']) + '%':<11}{cap} mAH"
         )
     body = header + "\r\r\n" + "\r\r\n".join(rows)
@@ -584,6 +645,10 @@ def _resp_soh(cmd: str) -> bytes:
     m = MODELS[_cfg["model"]]
     cells = m["cells"]
 
+    n_groups = _cfg["groups"]
+    slots_per_group = _cfg["slots"]
+    batt_per_group = _cfg["batteries"]
+
     parts = cmd.split()
     bat_id = 1
     if len(parts) > 1:
@@ -591,6 +656,16 @@ def _resp_soh(cmd: str) -> bytes:
             bat_id = int(parts[1])
         except ValueError:
             pass
+
+    if bat_id < 1 or bat_id > n_groups * slots_per_group:
+        return _wrap(cmd, f"Battery {bat_id} not found")
+
+    slot_in_group = ((bat_id - 1) % slots_per_group) + 1
+    present = slot_in_group <= batt_per_group
+    fault = _faults.get(bat_id)
+
+    if not present or fault == "absent":
+        return _wrap(cmd, f"Power   {bat_id}\r\r\nAbsent")
 
     # SOH degrades slightly with cycle count; each cell varies a little
     base_soh = max(0, 100 - int(cycles * 0.02))
@@ -753,6 +828,7 @@ def _resp_pwrsys(cmd: str) -> bytes:
     rec_chg_v = 3650 * cells
     rec_dsg_v = 2800 * cells
 
+    sys_alarm_st = "Alarm" if any(f != "absent" for f in _faults.values()) else "Normal"
     lines = [
         f"Groups       : {n_groups}",
         f"Modules/Group: {batt_per_group}",
@@ -766,6 +842,7 @@ def _resp_pwrsys(cmd: str) -> bytes:
         f"Sys RC       : {rc_mah} mAH",
         f"Sys FCC      : {fcc_mah} mAH",
         f"Sys State    : {_base_state(s['current'])}",
+        f"Sys Alarm    : {sys_alarm_st}",
         f"Sys Vlow     : {s['volt_low']} mV",
         f"Sys Vhigh    : {s['volt_high']} mV",
         f"Sys Tlow     : {s['temp_low']} mC",
@@ -777,13 +854,29 @@ def _resp_pwrsys(cmd: str) -> bytes:
     ]
     if n_groups > 1:
         lines.append("")
+        # Per-group currents that sum exactly to Sys Current
+        group_currents: list[int] = []
+        remaining = sys_curr
+        for g in range(1, n_groups + 1):
+            if g < n_groups:
+                grng = random.Random(g)
+                gc = s["current"] + grng.randint(-50, 50)
+                group_currents.append(gc)
+                remaining -= gc
+            else:
+                group_currents.append(remaining)
         for g in range(1, n_groups + 1):
             grng = random.Random(g)
             gv = s["voltage"] + grng.randint(-200, 200)
-            gc = s["current"] + grng.randint(-200, 200)
+            gc = group_currents[g - 1]
+            g_absent = sum(
+                1 for slot in range(1, batt_per_group + 1)
+                if _faults.get((g - 1) * slots_per_group + slot) == "absent"
+            )
+            g_online = batt_per_group - g_absent
             lines.append(
                 f"Group {g:<3}     Volt: {gv}  Curr: {gc}"
-                f"  SOC: {s['soc']}%  State: {_base_state(gc)}"
+                f"  Online: {g_online}  SOC: {s['soc']}%  State: {_base_state(gc)}"
             )
     body = "\r\r\n".join(lines)
     return _wrap(cmd, body)
@@ -798,7 +891,8 @@ def _resp_stub(cmd: str) -> bytes:
     stub fault <bat> <ov|uv|ot|ut|oc|absent>  — inject fault on battery <bat>
     stub clear <bat>                           — clear injected fault
     stub soc <pct>                             — override global SOC (0-100)
-    stub current <mA>                          — override current (0 = idle, negative = discharge)
+    stub current <mA>                          — fix current (persists until 'auto')
+    stub current auto                          — return current to updater control
     """
     if not _admin_mode:
         return _wrap(cmd, "Admin mode required — login 000000", kv=True)
@@ -844,17 +938,22 @@ def _resp_stub(cmd: str) -> bytes:
             _state["soc"] = pct
         return _wrap(cmd, f"SOC set to {pct}%", kv=True)
     if sub == "current" and len(parts) >= 3:
+        if parts[2].lower() == "auto":
+            with _state_lock:
+                _state["current_override"] = None
+            return _wrap(cmd, "Current override cleared (auto mode resumed)", kv=True)
         try:
             ma = int(parts[2])
         except ValueError:
-            return _wrap(cmd, "Error: <mA> must be an integer", kv=True)
+            return _wrap(cmd, "Error: <mA> must be an integer or 'auto'", kv=True)
         with _state_lock:
             _state["current"] = ma
             _state["charging"] = ma > 0
-        return _wrap(cmd, f"Current set to {ma} mA", kv=True)
+            _state["current_override"] = ma
+        return _wrap(cmd, f"Current fixed at {ma} mA (use 'stub current auto' to resume)", kv=True)
     return _wrap(
         cmd,
-        "Usage: stub fault <bat> <ov|uv|ot|ut|oc|absent> | stub clear <bat> | stub soc <pct> | stub current <mA>",
+        "Usage: stub fault <bat> <ov|uv|ot|ut|oc|absent> | stub clear <bat> | stub soc <pct> | stub current <mA|auto>",
         kv=True,
     )
 
