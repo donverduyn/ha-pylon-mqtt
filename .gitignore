@@ -35,7 +35,6 @@ MANIFEST
 
 # IDE & editors
 .idea/
-.vscode/
 *.swp
 *.swo
 *~
@@ -49,3 +48,6 @@ docker/*.env
 
 # Home Assistant / HACS
 *.log
+
+# RUff
+.ruff_cache/
