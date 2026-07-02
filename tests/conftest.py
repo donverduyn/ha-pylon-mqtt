@@ -1,6 +1,6 @@
 # tests/conftest.py
 """
-Shared pytest fixtures and import bootstrap for ha-pylon-mqtt tests.
+Shared pytest fixtures and import bootstrap for ha-pylontech-mqtt tests.
 
 The custom_components package pulls in `homeassistant` at __init__.py time,
 which is not available outside HA.  We bypass __init__.py by registering a
