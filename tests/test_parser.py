@@ -377,13 +377,14 @@ class TestParseTime:
 # (simulates what the coordinator does on each full poll cycle)
 # ===========================================================================
 class TestFullPollCycle:
-    @pytest.fixture
-    def full_system(self, stub_conn):
+    @pytest.fixture(scope="class")
+    @classmethod
+    def full_system(cls, stub_conn_class):
         """Run all three commands sequentially, as the coordinator does."""
-        raw_pwr = _raw_command(stub_conn, "pwr")
-        raw_stat = _raw_command(stub_conn, "stat")
-        raw_time = _raw_command(stub_conn, "time")
-        raw_info = _raw_command(stub_conn, "info")
+        raw_pwr = _raw_command(stub_conn_class, "pwr")
+        raw_stat = _raw_command(stub_conn_class, "stat")
+        raw_time = _raw_command(stub_conn_class, "time")
+        raw_info = _raw_command(stub_conn_class, "info")
 
         system = PylontechParser.parse_pwr(raw_pwr)
         PylontechParser.parse_stat(raw_stat, system)
@@ -453,10 +454,11 @@ class TestStubProtocolParity:
     """Verify that the stub responses contain the structural markers that the
     coordinator and parsers rely on, without going through the parser layer."""
 
-    @pytest.fixture
-    def raw(self, stub_conn):
+    @pytest.fixture(scope="class")
+    @classmethod
+    def raw(cls, stub_conn_class):
         cmds = ["pwr", "info", "stat", "time", "bat", "soh", "help"]
-        return {c: _raw_command(stub_conn, c) for c in cmds}
+        return {c: _raw_command(stub_conn_class, c) for c in cmds}
 
     def test_all_responses_end_with_prompt(self, raw):
         for cmd, resp in raw.items():

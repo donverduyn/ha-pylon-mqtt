@@ -77,7 +77,7 @@ def stub_server():
     proc = subprocess.Popen(
         [
             sys.executable,
-            str(_ROOT / "stub" / "pylon_stub.py"),
+            str(_ROOT / "scripts" / "pylon_stub.py"),
             "--host",
             STUB_HOST,
             "--port",
@@ -103,33 +103,69 @@ def stub_server():
 # ---------------------------------------------------------------------------
 # Per-test TCP connection helpers
 # ---------------------------------------------------------------------------
-def _raw_command(sock: socket.socket, cmd: str, read_pause: float = 0.4) -> str:
-    """Send *cmd* over *sock* and return the full ASCII response."""
-    sock.sendall((cmd + "\n").encode("ascii"))
-    time.sleep(read_pause)
+def _drain_prompt(sock: socket.socket) -> None:
+    """Read and discard the initial 'pylon>' banner sent on new connections."""
     data = b""
-    sock.settimeout(0.5)
-    try:
-        while True:
+    sock.settimeout(0.1)
+    deadline = time.monotonic() + 2.0
+    while time.monotonic() < deadline:
+        try:
+            chunk = sock.recv(4096)
+            if not chunk:
+                break
+            data += chunk
+            if b"pylon>" in data:
+                break
+        except socket.timeout:
+            break
+
+
+def _raw_command(sock: socket.socket, cmd: str, timeout: float = 3.0) -> str:
+    """Send *cmd* over *sock* and return the full ASCII response.
+
+    Returns as soon as the 'pylon>' prompt appears or *timeout* seconds elapse.
+    """
+    sock.sendall((cmd + "\n").encode("ascii"))
+    data = b""
+    deadline = time.monotonic() + timeout
+    sock.settimeout(0.05)
+    while time.monotonic() < deadline:
+        try:
             chunk = sock.recv(8192)
             if not chunk:
                 break
             data += chunk
-    except socket.timeout:
-        pass
+            if b"pylon>" in data:
+                break
+        except socket.timeout:
+            if b"pylon>" in data:
+                break
     return data.decode("ascii", errors="replace")
+
+
+@pytest.fixture(scope="session")
+def _session_conn(stub_server):
+    """Single persistent connection used by session-scoped parsed fixtures."""
+    s = socket.create_connection((STUB_HOST, stub_server), timeout=3)
+    _drain_prompt(s)
+    yield s
+    s.close()
+
+
+@pytest.fixture(scope="class")
+def stub_conn_class(stub_server):
+    """Class-scoped TCP connection shared across all tests in one class."""
+    s = socket.create_connection((STUB_HOST, stub_server), timeout=3)
+    _drain_prompt(s)
+    yield s
+    s.close()
 
 
 @pytest.fixture
 def stub_conn(stub_server):
     """Open a fresh TCP connection to the stub, consume the initial prompt."""
     s = socket.create_connection((STUB_HOST, stub_server), timeout=3)
-    s.settimeout(2)
-    time.sleep(0.15)
-    try:
-        s.recv(4096)  # discard initial "pylon>" prompt
-    except socket.timeout:
-        pass
+    _drain_prompt(s)
     yield s
     s.close()
 
@@ -137,39 +173,39 @@ def stub_conn(stub_server):
 # ---------------------------------------------------------------------------
 # Convenience: parsed objects ready for assertions
 # ---------------------------------------------------------------------------
-@pytest.fixture
-def pwr_system(stub_conn):
+@pytest.fixture(scope="session")
+def pwr_system(_session_conn):
     from pylontech_serial.parser import PylontechParser
 
-    raw = _raw_command(stub_conn, "pwr")
+    raw = _raw_command(_session_conn, "pwr")
     return PylontechParser.parse_pwr(raw)
 
 
-@pytest.fixture
-def info_system(stub_conn):
+@pytest.fixture(scope="session")
+def info_system(_session_conn):
     from pylontech_serial.parser import PylontechParser
     from pylontech_serial.structs import PylontechSystem
 
-    raw = _raw_command(stub_conn, "info")
+    raw = _raw_command(_session_conn, "info")
     sys = PylontechSystem(0, 0, 0, 0, 0, 0, 0)
     return PylontechParser.parse_info(raw, sys)
 
 
-@pytest.fixture
-def stat_system(stub_conn):
+@pytest.fixture(scope="session")
+def stat_system(_session_conn):
     from pylontech_serial.parser import PylontechParser
     from pylontech_serial.structs import PylontechSystem
 
-    raw = _raw_command(stub_conn, "stat")
+    raw = _raw_command(_session_conn, "stat")
     sys = PylontechSystem(0, 0, 0, 0, 0, 0, 0)
     return PylontechParser.parse_stat(raw, sys)
 
 
-@pytest.fixture
-def time_system(stub_conn):
+@pytest.fixture(scope="session")
+def time_system(_session_conn):
     from pylontech_serial.parser import PylontechParser
     from pylontech_serial.structs import PylontechSystem
 
-    raw = _raw_command(stub_conn, "time")
+    raw = _raw_command(_session_conn, "time")
     sys = PylontechSystem(0, 0, 0, 0, 0, 0, 0)
     return PylontechParser.parse_time(raw, sys)
