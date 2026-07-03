@@ -168,7 +168,7 @@ Connect to the **Console** port of the *master* battery module using a USB-to-RS
 
 Ensure the DIP switches are configured for the correct baud rate. For US2000/US3000/US5000, **all DIP switches OFF** selects the default baud rate of **115200**.
 
-![DIP Switches](img/dip-switches.jpg)
+![DIP Switches](assets/dip-switches.jpg)
 *Pylontech US2000 with all DIP switches OFF*
 
 ## Upgrading from v1.x

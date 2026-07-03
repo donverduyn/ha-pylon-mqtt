@@ -2,15 +2,7 @@ import logging
 import re
 from datetime import datetime
 
-try:
-    from .structs import PylontechBattery, PylontechCell, PylontechSystem
-except ImportError:
-    # Standalone import when used outside the HA package (e.g. sidecar container)
-    from structs import (  # type: ignore[no-redef]
-        PylontechBattery,
-        PylontechCell,
-        PylontechSystem,
-    )
+from structs import PylontechBattery, PylontechCell, PylontechSystem
 
 _LOGGER = logging.getLogger(__name__)
 

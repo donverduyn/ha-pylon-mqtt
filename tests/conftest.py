@@ -79,8 +79,10 @@ def _load_module(name: str, path: Path):
     return mod
 
 
-_load_module("pylontech_mqtt.structs", _COMP / "structs.py")
-_load_module("pylontech_mqtt.parser", _COMP / "parser.py")
+_structs = _load_module("pylontech_mqtt.structs", _ROOT / "docker" / "structs.py")
+sys.modules.setdefault("structs", _structs)
+_load_module("pylontech_mqtt.parser", _ROOT / "docker" / "parser.py")
+_load_module("pylontech_mqtt.capacity", _COMP / "capacity.py")
 
 
 # ---------------------------------------------------------------------------

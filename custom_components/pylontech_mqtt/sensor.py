@@ -467,12 +467,12 @@ async def async_setup_entry(
         if not coordinator.data:
             return
         new_entities: list[PylontechBatterySensor] = []
-        for bat in coordinator.data.batteries:
-            if bat.sys_id not in seen_bat_ids:
-                seen_bat_ids.add(bat.sys_id)
+        for bat in coordinator.data.get("batteries", []):
+            if bat.get("sys_id") not in seen_bat_ids:
+                seen_bat_ids.add(bat.get("sys_id"))
                 new_entities.extend(
                     PylontechBatterySensor(
-                        coordinator, entry.entry_id, bat.sys_id, desc
+                        coordinator, entry.entry_id, bat.get("sys_id"), desc
                     )
                     for desc in BATTERY_SENSORS
                 )
@@ -488,14 +488,14 @@ async def async_setup_entry(
         if not coordinator.data:
             return
         new_entities: list[PylontechCellSensor] = []
-        for bat in coordinator.data.batteries:
-            bat_cells = seen_cell_ids.setdefault(bat.sys_id, set())
-            for cell in bat.cells:
-                if cell.cell_id not in bat_cells:
-                    bat_cells.add(cell.cell_id)
+        for bat in coordinator.data.get("batteries", []):
+            bat_cells = seen_cell_ids.setdefault(bat.get("sys_id"), set())
+            for cell in bat.get("cells", []):
+                if cell.get("cell_id") not in bat_cells:
+                    bat_cells.add(cell.get("cell_id"))
                     new_entities.extend(
                         PylontechCellSensor(
-                            coordinator, entry.entry_id, bat.sys_id, cell.cell_id, desc
+                            coordinator, entry.entry_id, bat.get("sys_id"), cell.get("cell_id"), desc
                         )
                         for desc in CELL_SENSORS
                     )
@@ -532,7 +532,7 @@ class PylontechSystemSensor(PylontechSystemEntity, SensorEntity):
     def native_value(self):
         if not self.coordinator.data:
             return None
-        return getattr(self.coordinator.data, self.entity_description.key, None)
+        return self.coordinator.data.get(self.entity_description.key)
 
 
 class PylontechBatterySensor(PylontechBatteryEntity, SensorEntity):
@@ -555,9 +555,9 @@ class PylontechBatterySensor(PylontechBatteryEntity, SensorEntity):
     def native_value(self):
         if not self.coordinator.data:
             return None
-        for bat in self.coordinator.data.batteries:
-            if bat.sys_id == self._bat_id:
-                return getattr(bat, self.entity_description.key, None)
+        for bat in self.coordinator.data.get("batteries", []):
+            if bat.get("sys_id") == self._bat_id:
+                return bat.get(self.entity_description.key)
         return None
 
 
@@ -583,9 +583,9 @@ class PylontechCellSensor(PylontechCellEntity, SensorEntity):
     def native_value(self):
         if not self.coordinator.data:
             return None
-        for bat in self.coordinator.data.batteries:
-            if bat.sys_id == self._bat_id:
-                for cell in bat.cells:
-                    if cell.cell_id == self._cell_id:
-                        return getattr(cell, self.entity_description.key, None)
+        for bat in self.coordinator.data.get("batteries", []):
+            if bat.get("sys_id") == self._bat_id:
+                for cell in bat.get("cells", []):
+                    if cell.get("cell_id") == self._cell_id:
+                        return cell.get(self.entity_description.key)
         return None

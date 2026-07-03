@@ -8,14 +8,13 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 from paho.mqtt.enums import CallbackAPIVersion
 
+from .capacity import parse_spec_capacity
 from .const import DEFAULT_BATTERY_CAPACITY, DOMAIN
-from .parser import PylontechParser
-from .structs import PylontechBattery, PylontechCell, PylontechSystem
 
 _LOGGER = logging.getLogger(__name__)
 
 
-class PylontechCoordinator(DataUpdateCoordinator[PylontechSystem]):
+class PylontechCoordinator(DataUpdateCoordinator[dict]):
     """Receive Pylontech BMS data pushed via MQTT from the sidecar container."""
 
     def __init__(
@@ -118,15 +117,15 @@ class PylontechCoordinator(DataUpdateCoordinator[PylontechSystem]):
             # "48V/100AH"), auto-derive the per-module kWh capacity so battery
             # number entities are pre-filled on first discovery instead of
             # defaulting to the US2000 fallback.
-            if not self._auto_capacity_set and system.spec:
-                derived = PylontechParser.parse_spec_capacity(system.spec)
+            if not self._auto_capacity_set and system.get("spec"):
+                derived = parse_spec_capacity(system["spec"])
                 if derived is not None:
                     self.default_capacity = derived
                     self._auto_capacity_set = True
                     _LOGGER.debug(
                         "Battery capacity auto-set to %.2f kWh from spec '%s'",
                         derived,
-                        system.spec,
+                        system["spec"],
                     )
             self._compute_energy_stored(system)
             self.async_set_updated_data(system)
@@ -137,7 +136,7 @@ class PylontechCoordinator(DataUpdateCoordinator[PylontechSystem]):
     # DataUpdateCoordinator override
     # ------------------------------------------------------------------
 
-    async def _async_update_data(self) -> PylontechSystem:
+    async def _async_update_data(self) -> dict:
         """Re-compute derived values from last received data.
 
         Called when a manual refresh is requested (e.g. after battery
@@ -156,101 +155,26 @@ class PylontechCoordinator(DataUpdateCoordinator[PylontechSystem]):
         self.last_update_success = False
         self.async_update_listeners()
 
-    def _deserialize(self, data: dict) -> PylontechSystem:
-        """Build a PylontechSystem dataclass instance from a JSON payload dict."""
-        batteries: list[PylontechBattery] = []
-        for b in data.get("batteries", []):
-            cells: list[PylontechCell] = [
-                PylontechCell(
-                    cell_id=c.get("cell_id", 0),
-                    voltage=c.get("voltage", 0.0),
-                    current=c.get("current", 0.0),
-                    temperature=c.get("temperature", 0.0),
-                    base_state=c.get("base_state", ""),
-                    volt_status=c.get("volt_status"),
-                    curr_status=c.get("curr_status"),
-                    temp_status=c.get("temp_status"),
-                    soc=c.get("soc", 0),
-                    capacity=c.get("capacity"),
-                )
-                for c in b.get("cells", [])
-            ]
-            batteries.append(
-                PylontechBattery(
-                    sys_id=b.get("sys_id", 0),
-                    voltage=b.get("voltage", 0),
-                    current=b.get("current", 0),
-                    temperature=b.get("temperature", 0),
-                    soc=b.get("soc", 0),
-                    status=b.get("status", ""),
-                    power=b.get("power", 0),
-                    raw=b.get("raw", ""),
-                    energy_stored=0.0,
-                    temp_low=b.get("temp_low"),
-                    temp_high=b.get("temp_high"),
-                    volt_low=b.get("volt_low"),
-                    volt_high=b.get("volt_high"),
-                    volt_status=b.get("volt_status"),
-                    curr_status=b.get("curr_status"),
-                    temp_status=b.get("temp_status"),
-                    batt_volt_status=b.get("batt_volt_status"),
-                    batt_temp_status=b.get("batt_temp_status"),
-                    cells=cells,
-                )
-            )
+    def _deserialize(self, data: dict) -> dict:
+        """Normalise the JSON payload dict, injecting energy_stored defaults."""
+        batteries = [
+            {**b, "energy_stored": 0.0, "cells": b.get("cells", [])}
+            for b in data.get("batteries", [])
+        ]
+        required_defaults = {
+            "voltage": 0, "current": 0, "soc": 0, "power": 0,
+            "energy_in": 0.0, "energy_out": 0.0, "raw": "",
+        }
+        return {**required_defaults, **data, "energy_stored": 0.0, "batteries": batteries}
 
-        return PylontechSystem(
-            voltage=data.get("voltage", 0),
-            current=data.get("current", 0),
-            soc=data.get("soc", 0),
-            power=data.get("power", 0),
-            energy_in=data.get("energy_in", 0.0),
-            energy_out=data.get("energy_out", 0.0),
-            energy_stored=0.0,
-            cell_count=data.get("cell_count"),
-            spec=data.get("spec"),
-            barcode=data.get("barcode"),
-            fw_version=data.get("fw_version"),
-            soft_version=data.get("soft_version"),
-            board_version=data.get("board_version"),
-            boot_version=data.get("boot_version"),
-            comm_version=data.get("comm_version"),
-            release_date=data.get("release_date"),
-            manufacturer=data.get("manufacturer"),
-            model=data.get("model"),
-            max_charge_curr=data.get("max_charge_curr"),
-            max_dischg_curr=data.get("max_dischg_curr"),
-            bms_time=data.get("bms_time"),
-            cycles=data.get("cycles"),
-            soh=data.get("soh"),
-            charge_times=data.get("charge_times"),
-            discharge_cnt=data.get("discharge_cnt"),
-            idle_times=data.get("idle_times"),
-            shut_times=data.get("shut_times"),
-            reset_times=data.get("reset_times"),
-            sc_times=data.get("sc_times"),
-            bat_ov_times=data.get("bat_ov_times"),
-            bat_hv_times=data.get("bat_hv_times"),
-            bat_lv_times=data.get("bat_lv_times"),
-            bat_uv_times=data.get("bat_uv_times"),
-            pwr_ov_times=data.get("pwr_ov_times"),
-            pwr_hv_times=data.get("pwr_hv_times"),
-            life_warn_times=data.get("life_warn_times"),
-            life_alarm_times=data.get("life_alarm_times"),
-            pwr_coulomb=data.get("pwr_coulomb"),
-            dsg_cap=data.get("dsg_cap"),
-            raw=data.get("raw", ""),
-            batteries=batteries,
-        )
-
-    def _compute_energy_stored(self, system: PylontechSystem) -> None:
+    def _compute_energy_stored(self, system: dict) -> None:
         """Compute energy_stored per battery and system total from SOC × capacity."""
         total = 0.0
-        for bat in system.batteries:
-            cap = self.battery_capacities.get(bat.sys_id, self.default_capacity)
-            bat.energy_stored = round(cap * (bat.soc / 100.0), 3)
-            total += bat.energy_stored
-        system.energy_stored = round(total, 3)
+        for bat in system["batteries"]:
+            cap = self.battery_capacities.get(bat["sys_id"], self.default_capacity)
+            bat["energy_stored"] = round(cap * (bat["soc"] / 100.0), 3)
+            total += bat["energy_stored"]
+        system["energy_stored"] = round(total, 3)
 
     def set_battery_capacity(self, bat_id: int, capacity: float) -> None:
         """Update the configured capacity for a specific battery module."""

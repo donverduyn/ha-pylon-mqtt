@@ -24,12 +24,12 @@ async def async_setup_entry(
         if not coordinator.data:
             return
         new_entities = []
-        for bat in coordinator.data.batteries:
-            if bat.sys_id not in seen_bat_ids:
-                seen_bat_ids.add(bat.sys_id)
+        for bat in coordinator.data.get("batteries", []):
+            if bat.get("sys_id") not in seen_bat_ids:
+                seen_bat_ids.add(bat.get("sys_id"))
                 new_entities.append(
                     PylontechBatteryCapacityNumber(
-                        coordinator, entry.entry_id, bat.sys_id
+                        coordinator, entry.entry_id, bat.get("sys_id")
                     )
                 )
         if new_entities:

@@ -34,19 +34,8 @@ import paho.mqtt.client as mqtt
 import serial
 from paho.mqtt.enums import CallbackAPIVersion
 
-# structs.py defines the shared data model (PylontechSystem / PylontechBattery).
-# parser.py contains the BMS parsing logic that runs here in the sidecar.
-# Both files live in custom_components/pylontech_mqtt/ as the canonical source
-# and are copied into this container at build time (see Dockerfile).
-# The HA integration uses structs.py to deserialise the MQTT JSON into typed
-# objects.  parser.py is not loaded by HA at runtime; it is tested by the
-# shared test suite to verify correctness of the parsing logic.
-try:
-    from pylontech_mqtt.parser import PylontechParser
-    from pylontech_mqtt.structs import PylontechSystem
-except ImportError:  # Docker runtime: files copied flat into /app
-    from parser import PylontechParser  # type: ignore[import]
-    from structs import PylontechSystem  # type: ignore[import]
+from parser import PylontechParser
+from structs import PylontechSystem
 
 # ---------------------------------------------------------------------------
 # Logging

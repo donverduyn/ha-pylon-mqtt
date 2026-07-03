@@ -10,11 +10,6 @@ import pytest
 from homeassistant.core import HomeAssistant
 
 from custom_components.pylontech_mqtt.coordinator import PylontechCoordinator
-from custom_components.pylontech_mqtt.structs import (
-    PylontechBattery,
-    PylontechCell,
-    PylontechSystem,
-)
 
 # ---------------------------------------------------------------------------
 # Shared test data
@@ -73,55 +68,55 @@ class TestDeserialize:
     async def test_returns_pylontech_system(
         self, coordinator: PylontechCoordinator
     ) -> None:
-        assert isinstance(coordinator._deserialize(_PAYLOAD), PylontechSystem)
+        assert isinstance(coordinator._deserialize(_PAYLOAD), dict)
 
     async def test_scalar_fields(self, coordinator: PylontechCoordinator) -> None:
         s = coordinator._deserialize(_PAYLOAD)
-        assert s.voltage == 51.2
-        assert s.current == 10.0
-        assert s.soc == 80.0
-        assert s.energy_in == 10.5
-        assert s.energy_out == 5.2
+        assert s["voltage"] == 51.2
+        assert s["current"] == 10.0
+        assert s["soc"] == 80.0
+        assert s["energy_in"] == 10.5
+        assert s["energy_out"] == 5.2
 
     async def test_string_fields(self, coordinator: PylontechCoordinator) -> None:
         s = coordinator._deserialize(_PAYLOAD)
-        assert s.spec == "48V/100AH"
-        assert s.manufacturer == "Pylon"
-        assert s.model == "US5KBPL"
+        assert s["spec"] == "48V/100AH"
+        assert s["manufacturer"] == "Pylon"
+        assert s["model"] == "US5KBPL"
 
     async def test_battery_count(self, coordinator: PylontechCoordinator) -> None:
-        assert len(coordinator._deserialize(_PAYLOAD).batteries) == 1
+        assert len(coordinator._deserialize(_PAYLOAD)["batteries"]) == 1
 
     async def test_battery_fields(self, coordinator: PylontechCoordinator) -> None:
-        bat = coordinator._deserialize(_PAYLOAD).batteries[0]
-        assert isinstance(bat, PylontechBattery)
-        assert bat.sys_id == 1
-        assert bat.voltage == 51.2
-        assert bat.soc == 80
-        assert bat.status == "Charge"
+        bat = coordinator._deserialize(_PAYLOAD)["batteries"][0]
+        assert isinstance(bat, dict)
+        assert bat["sys_id"] == 1
+        assert bat["voltage"] == 51.2
+        assert bat["soc"] == 80
+        assert bat["status"] == "Charge"
 
     async def test_empty_payload_defaults(
         self, coordinator: PylontechCoordinator
     ) -> None:
         s = coordinator._deserialize({})
-        assert s.voltage == 0
-        assert s.soc == 0
-        assert s.batteries == []
-        assert s.spec is None
+        assert s["voltage"] == 0
+        assert s["soc"] == 0
+        assert s["batteries"] == []
+        assert s.get("spec") is None
 
     async def test_multiple_batteries(self, coordinator: PylontechCoordinator) -> None:
         payload = {**_PAYLOAD, "batteries": [_BAT1, {**_BAT1, "sys_id": 2, "soc": 60}]}
         s = coordinator._deserialize(payload)
-        assert len(s.batteries) == 2
-        assert s.batteries[1].sys_id == 2
-        assert s.batteries[1].soc == 60
+        assert len(s["batteries"]) == 2
+        assert s["batteries"][1]["sys_id"] == 2
+        assert s["batteries"][1]["soc"] == 60
 
     async def test_energy_stored_initialised_zero(
         self, coordinator: PylontechCoordinator
     ) -> None:
         s = coordinator._deserialize(_PAYLOAD)
-        assert s.energy_stored == 0.0
-        assert s.batteries[0].energy_stored == 0.0
+        assert s["energy_stored"] == 0.0
+        assert s["batteries"][0]["energy_stored"] == 0.0
 
     async def test_cells_populated(self, coordinator: PylontechCoordinator) -> None:
         cell = {
@@ -134,19 +129,19 @@ class TestDeserialize:
         }
         payload = {**_PAYLOAD, "batteries": [{**_BAT1, "cells": [cell]}]}
         s = coordinator._deserialize(payload)
-        cells = s.batteries[0].cells
+        cells = s["batteries"][0]["cells"]
         assert len(cells) == 1
-        assert isinstance(cells[0], PylontechCell)
-        assert cells[0].voltage == 3.4
+        assert isinstance(cells[0], dict)
+        assert cells[0]["voltage"] == 3.4
 
     async def test_optional_stat_fields_absent(
         self, coordinator: PylontechCoordinator
     ) -> None:
         """Stat fields not in payload stay None rather than raising KeyError."""
         s = coordinator._deserialize(_PAYLOAD)
-        assert s.cycles is None
-        assert s.soh is None
-        assert s.sc_times is None
+        assert s.get("cycles") is None
+        assert s.get("soh") is None
+        assert s.get("sc_times") is None
 
 
 # ---------------------------------------------------------------------------
@@ -159,7 +154,7 @@ class TestComputeEnergyStored:
         """default_capacity=2.4 kWh, soc=80 % → 1.920 kWh."""
         s = coordinator._deserialize(_PAYLOAD)
         coordinator._compute_energy_stored(s)
-        assert s.batteries[0].energy_stored == pytest.approx(1.920, rel=1e-3)
+        assert s["batteries"][0]["energy_stored"] == pytest.approx(1.920, rel=1e-3)
 
     async def test_system_total_equals_sum(
         self, coordinator: PylontechCoordinator
@@ -167,8 +162,8 @@ class TestComputeEnergyStored:
         payload = {**_PAYLOAD, "batteries": [_BAT1, {**_BAT1, "sys_id": 2, "soc": 60}]}
         s = coordinator._deserialize(payload)
         coordinator._compute_energy_stored(s)
-        expected = s.batteries[0].energy_stored + s.batteries[1].energy_stored
-        assert s.energy_stored == pytest.approx(expected, rel=1e-3)
+        expected = s["batteries"][0]["energy_stored"] + s["batteries"][1]["energy_stored"]
+        assert s["energy_stored"] == pytest.approx(expected, rel=1e-3)
 
     async def test_per_battery_capacity_override(
         self, coordinator: PylontechCoordinator
@@ -176,23 +171,23 @@ class TestComputeEnergyStored:
         coordinator.set_battery_capacity(1, 4.8)
         s = coordinator._deserialize(_PAYLOAD)
         coordinator._compute_energy_stored(s)
-        assert s.batteries[0].energy_stored == pytest.approx(4.8 * 0.80, rel=1e-3)
+        assert s["batteries"][0]["energy_stored"] == pytest.approx(4.8 * 0.80, rel=1e-3)
 
     async def test_zero_soc(self, coordinator: PylontechCoordinator) -> None:
         s = coordinator._deserialize({**_PAYLOAD, "batteries": [{**_BAT1, "soc": 0}]})
         coordinator._compute_energy_stored(s)
-        assert s.batteries[0].energy_stored == 0.0
-        assert s.energy_stored == 0.0
+        assert s["batteries"][0]["energy_stored"] == 0.0
+        assert s["energy_stored"] == 0.0
 
     async def test_full_charge(self, coordinator: PylontechCoordinator) -> None:
         s = coordinator._deserialize({**_PAYLOAD, "batteries": [{**_BAT1, "soc": 100}]})
         coordinator._compute_energy_stored(s)
-        assert s.batteries[0].energy_stored == pytest.approx(2.4, rel=1e-3)
+        assert s["batteries"][0]["energy_stored"] == pytest.approx(2.4, rel=1e-3)
 
     async def test_empty_batteries(self, coordinator: PylontechCoordinator) -> None:
         s = coordinator._deserialize({**_PAYLOAD, "batteries": []})
         coordinator._compute_energy_stored(s)
-        assert s.energy_stored == 0.0
+        assert s["energy_stored"] == 0.0
 
     async def test_second_battery_uses_its_own_capacity(
         self, coordinator: PylontechCoordinator
@@ -202,8 +197,8 @@ class TestComputeEnergyStored:
         payload = {**_PAYLOAD, "batteries": [_BAT1, {**_BAT1, "sys_id": 2, "soc": 50}]}
         s = coordinator._deserialize(payload)
         coordinator._compute_energy_stored(s)
-        assert s.batteries[0].energy_stored == pytest.approx(2.4 * 0.80, rel=1e-3)
-        assert s.batteries[1].energy_stored == pytest.approx(4.8 * 0.50, rel=1e-3)
+        assert s["batteries"][0]["energy_stored"] == pytest.approx(2.4 * 0.80, rel=1e-3)
+        assert s["batteries"][1]["energy_stored"] == pytest.approx(4.8 * 0.50, rel=1e-3)
 
 
 # ---------------------------------------------------------------------------
@@ -218,7 +213,7 @@ class TestSetBatteryCapacity:
         """set_battery_capacity affects the energy_stored produced for that battery."""
         coordinator.set_battery_capacity(1, 4.8)
         coordinator._process_payload(_PAYLOAD)  # bat 1, soc=80
-        assert coordinator.data.batteries[0].energy_stored == pytest.approx(
+        assert coordinator.data["batteries"][0]["energy_stored"] == pytest.approx(
             4.8 * 0.80, rel=1e-3
         )
 
@@ -228,7 +223,7 @@ class TestSetBatteryCapacity:
         coordinator.set_battery_capacity(1, 2.4)
         coordinator.set_battery_capacity(1, 4.8)
         coordinator._process_payload(_PAYLOAD)  # bat 1, soc=80
-        assert coordinator.data.batteries[0].energy_stored == pytest.approx(
+        assert coordinator.data["batteries"][0]["energy_stored"] == pytest.approx(
             4.8 * 0.80, rel=1e-3
         )
 
@@ -242,10 +237,10 @@ class TestSetBatteryCapacity:
             "batteries": [_BAT1, {**_BAT1, "sys_id": 2, "soc": 50}],
         }
         coordinator._process_payload(payload)
-        assert coordinator.data.batteries[0].energy_stored == pytest.approx(
+        assert coordinator.data["batteries"][0]["energy_stored"] == pytest.approx(
             2.4 * 0.80, rel=1e-3
         )
-        assert coordinator.data.batteries[1].energy_stored == pytest.approx(
+        assert coordinator.data["batteries"][1]["energy_stored"] == pytest.approx(
             4.8 * 0.50, rel=1e-3
         )
 
@@ -298,12 +293,12 @@ class TestAutoCapacity:
     ) -> None:
         coordinator._process_payload(_PAYLOAD)
         assert coordinator.data is not None
-        assert isinstance(coordinator.data, PylontechSystem)
-        assert coordinator.data.manufacturer == "Pylon"
+        assert isinstance(coordinator.data, dict)
+        assert coordinator.data["manufacturer"] == "Pylon"
 
     async def test_process_payload_computes_energy(
         self, coordinator: PylontechCoordinator
     ) -> None:
         coordinator._process_payload(_PAYLOAD)
-        assert coordinator.data.batteries[0].energy_stored > 0
-        assert coordinator.data.energy_stored > 0
+        assert coordinator.data["batteries"][0]["energy_stored"] > 0
+        assert coordinator.data["energy_stored"] > 0
