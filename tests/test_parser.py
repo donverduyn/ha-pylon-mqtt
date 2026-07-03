@@ -176,7 +176,8 @@ class TestParsePwr:
         assert pwr_system.soc == avg
 
     def test_system_power_calculated(self, pwr_system):
-        expected = round(pwr_system.voltage * pwr_system.current, 1)
+        """System power must equal the sum of per-battery powers (not V̄ × ΣI)."""
+        expected = round(sum(b.power for b in pwr_system.batteries), 1)
         assert pwr_system.power == expected
 
     def test_raw_text_stored(self, pwr_system):

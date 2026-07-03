@@ -83,6 +83,10 @@ MQTT_TOPIC_PREFIX = os.getenv("MQTT_TOPIC_PREFIX", "pylontech/stack")
 POLL_INTERVAL = _int_env("POLL_INTERVAL", 15)
 AUTO_SYNC_TIME = os.getenv("AUTO_SYNC_TIME", "false").lower() == "true"
 
+# Path where the energy counters are persisted across container restarts.
+# Override with the ENERGY_STATE_FILE env var (set to "" to disable persistence).
+ENERGY_STATE_FILE = os.getenv("ENERGY_STATE_FILE", "/data/energy_state.json")
+
 STATE_TOPIC = f"{MQTT_TOPIC_PREFIX}/state"
 AVAIL_TOPIC = f"{MQTT_TOPIC_PREFIX}/availability"
 
@@ -166,10 +170,42 @@ class BmsConnection:
 
 
 class EnergyTracker:
-    def __init__(self) -> None:
+    def __init__(self, state_file: str = "") -> None:
         self.energy_in: float = 0.0
         self.energy_out: float = 0.0
         self._last_time: Optional[datetime] = None
+        self._state_file = state_file
+        if state_file:
+            self._load()
+
+    def _load(self) -> None:
+        """Restore counters from the state file; silently start from 0 on any error."""
+        try:
+            with open(self._state_file) as f:
+                data = json.load(f)
+            # Parse both values before assigning so a partial/corrupt file
+            # (e.g. missing one key) leaves both counters at 0.
+            energy_in = float(data["energy_in"])
+            energy_out = float(data["energy_out"])
+            self.energy_in = energy_in
+            self.energy_out = energy_out
+            _LOGGER.info(
+                "Energy state restored: in=%.3f kWh out=%.3f kWh",
+                self.energy_in,
+                self.energy_out,
+            )
+        except FileNotFoundError:
+            pass  # First run — no state file yet
+        except (json.JSONDecodeError, KeyError, ValueError, OSError) as err:
+            _LOGGER.warning("Could not load energy state from %s: %s", self._state_file, err)
+
+    def _save(self) -> None:
+        """Persist current counters to the state file."""
+        try:
+            with open(self._state_file, "w") as f:
+                json.dump({"energy_in": self.energy_in, "energy_out": self.energy_out}, f)
+        except OSError as err:
+            _LOGGER.warning("Could not save energy state to %s: %s", self._state_file, err)
 
     def update(self, power_w: float) -> None:
         now = datetime.now()
@@ -180,6 +216,8 @@ class EnergyTracker:
                 self.energy_in += kwh
             else:
                 self.energy_out += kwh
+            if self._state_file:
+                self._save()
         self._last_time = now
 
     def invalidate_last_time(self) -> None:
@@ -272,7 +310,7 @@ def main() -> None:
 
     # -- BMS poll loop --
     bms = BmsConnection()
-    energy = EnergyTracker()
+    energy = EnergyTracker(state_file=ENERGY_STATE_FILE)
     system: Optional[PylontechSystem] = None
     info_fetched = False
 

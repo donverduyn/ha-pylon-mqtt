@@ -207,3 +207,54 @@ class TestIntegration:
         state = hass.states.get(entity_id)
         assert state is not None
         assert float(state.state) == pytest.approx(52.0)
+
+
+class TestUnloadEntry:
+    async def test_unload_removes_coordinator_from_hass_data(
+        self, hass: HomeAssistant
+    ) -> None:
+        """After unloading, the coordinator must be gone from hass.data."""
+        entry, _ = await _create_entry(hass)
+        assert entry.entry_id in hass.data[DOMAIN]
+
+        await hass.config_entries.async_unload(entry.entry_id)
+        await hass.async_block_till_done()
+
+        assert entry.entry_id not in hass.data.get(DOMAIN, {})
+
+    async def test_unload_calls_coordinator_shutdown(
+        self, hass: HomeAssistant
+    ) -> None:
+        """Unloading must invoke coordinator.shutdown() to stop the MQTT thread."""
+        from unittest.mock import patch as _patch
+
+        entry, coordinator = await _create_entry(hass)
+
+        with _patch.object(coordinator, "shutdown") as mock_shutdown:
+            await hass.config_entries.async_unload(entry.entry_id)
+            await hass.async_block_till_done()
+
+        mock_shutdown.assert_called_once()
+
+    async def test_reload_re_registers_sensors(
+        self, hass: HomeAssistant
+    ) -> None:
+        """After reload, the system voltage sensor must still be registered."""
+        entry, coordinator = await _create_entry(hass)
+        coordinator._process_payload(_PAYLOAD)
+        await hass.async_block_till_done()
+
+        with patch(_PATCH_SETUP):
+            await hass.config_entries.async_reload(entry.entry_id)
+            await hass.async_block_till_done()
+
+        reloaded_entries = hass.config_entries.async_entries(DOMAIN)
+        assert reloaded_entries
+        new_entry = reloaded_entries[0]
+        ent_reg = er.async_get(hass)
+        assert (
+            ent_reg.async_get_entity_id(
+                "sensor", DOMAIN, f"{new_entry.entry_id}_voltage"
+            )
+            is not None
+        )

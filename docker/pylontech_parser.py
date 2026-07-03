@@ -74,12 +74,17 @@ class PylontechParser:
                     parts.index("Temp.St") if "Temp.St" in parts else temp_st_idx
                 )
                 soc_idx = parts.index("Coulomb") if "Coulomb" in parts else soc_idx
-                bvst_data_idx = (
-                    (parts.index("B.V.St") + 1) if "B.V.St" in parts else bvst_data_idx
-                )
-                btst_data_idx = (
-                    (parts.index("B.T.St") + 1) if "B.T.St" in parts else btst_data_idx
-                )
+                if "B.V.St" in parts:
+                    hdr_i = parts.index("B.V.St")
+                    # Each "Time" header column expands to two data tokens
+                    # (date + clock); count occurrences before B.V.St to
+                    # compute the correct data-row offset.
+                    extra = sum(1 for tok in parts[:hdr_i] if tok == "Time")
+                    bvst_data_idx = hdr_i + extra
+                if "B.T.St" in parts:
+                    hdr_i = parts.index("B.T.St")
+                    extra = sum(1 for tok in parts[:hdr_i] if tok == "Time")
+                    btst_data_idx = hdr_i + extra
                 _LOGGER.debug(
                     "pwr header detected — volt=%d curr=%d temp=%d "
                     "tlow=%d thigh=%d vlow=%d vhigh=%d "
@@ -182,9 +187,9 @@ class PylontechParser:
             current_system.voltage = round(total_voltage / valid_lines, 2)
             current_system.current = round(total_current, 2)
             current_system.soc = round(total_soc / valid_lines, 1)
-            current_system.power = round(
-                current_system.voltage * current_system.current, 1
-            )
+            # Sum per-battery powers for accuracy; V̄ × ΣI can diverge from
+            # Σ(V_i × I_i) when module voltages are not perfectly balanced.
+            current_system.power = round(sum(b.power for b in batteries), 1)
         else:
             # No valid battery rows — reset system totals so we never publish
             # stale readings alongside an empty battery list.
@@ -304,33 +309,93 @@ class PylontechParser:
     def parse_bat(raw_text: str, battery: PylontechBattery) -> PylontechBattery:
         """Parses 'bat N' command output, populating battery.cells.
 
-        Expected table format (one row per cell):
-          Battery  Volt     Curr     Tempr    Base State   Volt. State  Curr. State  Temp. State  SOC        Coulomb
-          0        3378     3806     17000    Charge       Normal       Normal       Normal       85%        3333 mAH
+        Detects column positions from the header line so the parser is robust
+        against firmware variations that add, remove, or reorder columns.
+        Falls back to the original known-good defaults when no header is found.
 
-        Columns (0-indexed after split()):
-          0 cell_id, 1 voltage(mV), 2 current(mA), 3 temperature(mC),
-          4 base_state, 5 volt_status, 6 curr_status, 7 temp_status,
-          8 soc(%), 9 capacity(mAH)
+        Header example (two-word compound columns each map to one data token):
+          Battery  Volt  Curr  Tempr  Base State  Volt. State  Curr. State  Temp. State  SOC  Coulomb
+          0        3378  3806  17000  Charge      Normal       Normal       Normal       85%  3333 mAH
         """
+        # Default column indices — match the original hard-coded positions so
+        # firmware that omits the header line still parses correctly.
+        volt_idx = 1
+        curr_idx = 2
+        temp_idx = 3
+        base_idx = 4
+        volt_st_idx = 5
+        curr_st_idx = 6
+        temp_st_idx = 7
+        soc_idx = 8
+        cap_idx = 9
+
         cells: list[PylontechCell] = []
         for line in raw_text.splitlines():
             parts = line.split()
-            if not parts or not parts[0].isdigit():
+            if not parts:
                 continue
-            if len(parts) < 9:
+
+            # Header detection: starts with "Battery" and contains "Coulomb".
+            # Two-word compound column names ("X State") occupy two header
+            # tokens but produce a single token in each data row, so the
+            # data-row index is tracked separately from the header token index.
+            if parts[0] == "Battery" and "Coulomb" in parts:
+                hdr_i = 0  # header token position
+                data_i = 0  # corresponding data-row column index
+                while hdr_i < len(parts):
+                    tok = parts[hdr_i]
+                    if (
+                        hdr_i + 1 < len(parts)
+                        and parts[hdr_i + 1].lower() == "state"
+                    ):
+                        # Compound "X State" header → single data token
+                        if tok == "Base":
+                            base_idx = data_i
+                        elif tok == "Volt.":
+                            volt_st_idx = data_i
+                        elif tok == "Curr.":
+                            curr_st_idx = data_i
+                        elif tok == "Temp.":
+                            temp_st_idx = data_i
+                        hdr_i += 2
+                    else:
+                        if tok == "Volt":
+                            volt_idx = data_i
+                        elif tok == "Curr":
+                            curr_idx = data_i
+                        elif tok == "Tempr":
+                            temp_idx = data_i
+                        elif tok == "SOC":
+                            soc_idx = data_i
+                        elif tok == "Coulomb":
+                            cap_idx = data_i
+                        hdr_i += 1
+                    data_i += 1
+                _LOGGER.debug(
+                    "bat header detected — volt=%d curr=%d temp=%d "
+                    "base=%d volt_st=%d curr_st=%d temp_st=%d soc=%d cap=%d",
+                    volt_idx, curr_idx, temp_idx,
+                    base_idx, volt_st_idx, curr_st_idx, temp_st_idx,
+                    soc_idx, cap_idx,
+                )
+                continue
+
+            # Data rows: first token is the cell index (non-negative integer).
+            if not parts[0].isdigit():
+                continue
+            if len(parts) < soc_idx + 1:
                 continue
             try:
                 cell_id = int(parts[0])
-                voltage = int(parts[1]) / 1000.0
-                current = int(parts[2]) / 1000.0
-                temperature = int(parts[3]) / 1000.0
-                base_state = parts[4]
-                volt_status = parts[5] if len(parts) > 5 else None
-                curr_status = parts[6] if len(parts) > 6 else None
-                temp_status = parts[7] if len(parts) > 7 else None
-                soc = int(parts[8].replace("%", "")) if len(parts) > 8 else 0
-                capacity = int(parts[9]) if len(parts) > 9 else None
+                voltage = int(parts[volt_idx]) / 1000.0
+                current = int(parts[curr_idx]) / 1000.0
+                temperature = int(parts[temp_idx]) / 1000.0
+                base_state = parts[base_idx]
+                volt_status = parts[volt_st_idx] if len(parts) > volt_st_idx else None
+                curr_status = parts[curr_st_idx] if len(parts) > curr_st_idx else None
+                temp_status = parts[temp_st_idx] if len(parts) > temp_st_idx else None
+                soc = int(parts[soc_idx].replace("%", "")) if len(parts) > soc_idx else 0
+                capacity = int(parts[cap_idx]) if len(parts) > cap_idx else None
                 cells.append(
                     PylontechCell(
                         cell_id=cell_id,
