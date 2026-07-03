@@ -26,6 +26,18 @@ _ROOT = Path(__file__).parent.parent
 # pytest-homeassistant-custom-component blocks all TCP sockets in its
 # pytest_runtest_setup() hook.  The stub-based tests need real TCP connections
 # to 127.0.0.1; HA integration tests mock their connections and are unaffected.
+#
+# This is deliberately global/autouse rather than scoped to only the
+# stub-based test files. It was tried: scoping it down (opt-in per file via
+# a local autouse fixture) is *not* actually needed for correctness —
+# pytest-homeassistant-custom-component's own setup hook already permanently
+# allowlists 127.0.0.1 regardless of enable/disable state — but measured
+# ~2-4x slower full-suite wall time in a clean back-to-back A/B comparison
+# (block-by-default clearly costs something elsewhere in the HA test
+# fixture chain for the non-stub tests, even though nothing in those tests
+# knowingly opens a real socket). Global enable avoids that cost and
+# doesn't meaningfully weaken isolation given the host is already pinned to
+# 127.0.0.1 either way.
 # ---------------------------------------------------------------------------
 def _enable_sockets() -> None:
     """Re-enable real TCP sockets (no-op when pytest-socket is not installed)."""

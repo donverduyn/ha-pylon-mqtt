@@ -1,7 +1,8 @@
 {
   "config": {
     "abort": {
-      "already_configured": "El dispositiu ja està configurat"
+      "already_configured": "El dispositiu ja està configurat",
+      "reconfigure_successful": "Configuració del broker actualitzada correctament"
     },
     "error": {
       "already_configured": "Ja existeix una entrada de Pylontech que utilitza aquest broker i tòpic",
@@ -20,12 +21,8 @@
           "mqtt_pass": "Contrasenya (opcional)",
           "mqtt_topic": "Prefix del Tòpic"
         }
-      }
-    }
-  },
-  "options": {
-    "step": {
-      "init": {
+      },
+      "reconfigure": {
         "title": "Pylontech — Broker MQTT",
         "description": "Actualitza la configuració del broker MQTT.",
         "data": {

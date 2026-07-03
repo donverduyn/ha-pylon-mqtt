@@ -150,6 +150,8 @@ The sidecar publishes:
 > [!NOTE]
 > Entities will show as **unavailable** until the sidecar publishes its first MQTT message. This is expected — start or check the sidecar container if they stay unavailable.
 
+To change the broker host, port, credentials, or topic prefix later, use **Reconfigure** from the integration entry's **⋮** menu in **Settings** > **Devices & Services** — this replaces the stored connection details in place rather than layering a separate copy on top.
+
 ## Battery Capacity Configuration
 
 Each detected battery module gets its own **Number entity** (under the module's device page) to configure its capacity in kWh. This is used to calculate the stored energy per module and the system total.
@@ -171,7 +173,7 @@ Default values by model:
 5. Click **Save**.
 
 > [!NOTE]
-> Energy values (`energy_in` / `energy_out`) are tracked inside the sidecar container and reset when the container restarts. The HA Energy dashboard handles cumulative tracking via its own long-term statistics, so container restarts will not corrupt your historical totals.
+> Energy values (`energy_in` / `energy_out`) are tracked inside the sidecar container and persisted to `ENERGY_STATE_FILE` (default `/data/energy_state.json`) by default, so they survive both plain restarts and container recreation as long as the `/data` volume shown in Step 1 exists. They only reset to zero if persistence is disabled (`ENERGY_STATE_FILE=""`) or that volume is removed. Either way, the HA Energy dashboard handles cumulative tracking via its own long-term statistics — a counter reset is treated as the start of a new cycle, not corruption of your historical totals.
 
 ## Hardware Notes
 

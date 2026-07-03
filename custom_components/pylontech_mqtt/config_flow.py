@@ -7,7 +7,6 @@ import time
 import paho.mqtt.client as mqtt
 import voluptuous as vol
 from homeassistant import config_entries
-from homeassistant.core import callback
 from homeassistant.helpers.selector import (
     TextSelector,
     TextSelectorConfig,
@@ -103,6 +102,28 @@ def _mqtt_unique_id(host: str, port: int, topic: str) -> str:
     return f"{host}:{port}:{topic}"
 
 
+async def _validate_broker(
+    hass, host: str, port: int, user_input: dict
+) -> str | None:
+    """Run _test_mqtt_connection in the executor with a timeout.
+
+    Returns None on success, or an error key on failure/timeout.
+    """
+    try:
+        return await asyncio.wait_for(
+            hass.async_add_executor_job(
+                _test_mqtt_connection,
+                host,
+                port,
+                user_input.get(CONF_MQTT_USER, ""),
+                user_input.get(CONF_MQTT_PASS, ""),
+            ),
+            timeout=10.0,
+        )
+    except asyncio.TimeoutError:
+        return "cannot_connect"
+
+
 class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     """Handle a config flow for Pylontech MQTT."""
 
@@ -116,19 +137,7 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             host = user_input[CONF_MQTT_HOST]
             port = user_input[CONF_MQTT_PORT]
 
-            try:
-                conn_error = await asyncio.wait_for(
-                    self.hass.async_add_executor_job(
-                        _test_mqtt_connection,
-                        host,
-                        port,
-                        user_input.get(CONF_MQTT_USER, ""),
-                        user_input.get(CONF_MQTT_PASS, ""),
-                    ),
-                    timeout=10.0,
-                )
-            except asyncio.TimeoutError:
-                conn_error = "cannot_connect"
+            conn_error = await _validate_broker(self.hass, host, port, user_input)
             if conn_error:
                 errors["base"] = conn_error
             else:
@@ -147,88 +156,55 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             errors=errors,
         )
 
-    @staticmethod
-    @callback
-    def async_get_options_flow(config_entry):
-        return OptionsFlowHandler()
+    async def async_step_reconfigure(self, user_input=None):
+        """Let the user update broker settings for an existing entry.
 
-
-class OptionsFlowHandler(config_entries.OptionsFlow):
-    """Allow the user to update MQTT broker settings."""
-
-    async def async_step_init(self, user_input=None):
+        Updates entry.data in place (via async_update_reload_and_abort)
+        instead of stacking changes in entry.options — broker credentials
+        are setup data, not runtime-tunable options, and a single source of
+        truth means an old password can't linger in storage after rotation.
+        """
         errors: dict[str, str] = {}
+        reconfigure_entry = self._get_reconfigure_entry()
 
         if user_input is not None:
             host = user_input[CONF_MQTT_HOST]
             port = user_input[CONF_MQTT_PORT]
 
-            try:
-                conn_error = await asyncio.wait_for(
-                    self.hass.async_add_executor_job(
-                        _test_mqtt_connection,
-                        host,
-                        port,
-                        user_input.get(CONF_MQTT_USER, ""),
-                        user_input.get(CONF_MQTT_PASS, ""),
-                    ),
-                    timeout=10.0,
-                )
-            except asyncio.TimeoutError:
-                conn_error = "cannot_connect"
+            conn_error = await _validate_broker(self.hass, host, port, user_input)
             if conn_error:
                 errors["base"] = conn_error
             else:
-                new_unique_id = _mqtt_unique_id(
-                    host, port, user_input[CONF_MQTT_TOPIC]
-                )
+                new_unique_id = _mqtt_unique_id(host, port, user_input[CONF_MQTT_TOPIC])
                 for other in self.hass.config_entries.async_entries(DOMAIN):
-                    other_host = other.options.get(
-                        CONF_MQTT_HOST, other.data.get(CONF_MQTT_HOST, "")
-                    )
-                    other_port = other.options.get(
-                        CONF_MQTT_PORT, other.data.get(CONF_MQTT_PORT, DEFAULT_MQTT_PORT)
-                    )
-                    other_topic = other.options.get(
-                        CONF_MQTT_TOPIC,
+                    if other.entry_id == reconfigure_entry.entry_id:
+                        continue
+                    other_unique_id = _mqtt_unique_id(
+                        other.data.get(CONF_MQTT_HOST, ""),
+                        other.data.get(CONF_MQTT_PORT, DEFAULT_MQTT_PORT),
                         other.data.get(CONF_MQTT_TOPIC, DEFAULT_MQTT_TOPIC),
                     )
-                    other_effective_unique_id = _mqtt_unique_id(
-                        other_host, other_port, other_topic
-                    )
-                    if (
-                        other.entry_id != self.config_entry.entry_id
-                        and (
-                            other.unique_id == new_unique_id
-                            or other_effective_unique_id == new_unique_id
-                        )
-                    ):
+                    if other.unique_id == new_unique_id or other_unique_id == new_unique_id:
                         errors["base"] = "already_configured"
                         break
                 else:
-                    self.hass.config_entries.async_update_entry(
-                        self.config_entry, unique_id=new_unique_id
+                    return self.async_update_reload_and_abort(
+                        reconfigure_entry,
+                        unique_id=new_unique_id,
+                        data=user_input,
                     )
-                    return self.async_create_entry(title="", data=user_input)
 
-        entry = self.config_entry
         return self.async_show_form(
-            step_id="init",
+            step_id="reconfigure",
             data_schema=_broker_schema(
-                default_host=entry.options.get(
-                    CONF_MQTT_HOST, entry.data.get(CONF_MQTT_HOST, "")
+                default_host=reconfigure_entry.data.get(CONF_MQTT_HOST, ""),
+                default_port=reconfigure_entry.data.get(
+                    CONF_MQTT_PORT, DEFAULT_MQTT_PORT
                 ),
-                default_port=entry.options.get(
-                    CONF_MQTT_PORT, entry.data.get(CONF_MQTT_PORT, DEFAULT_MQTT_PORT)
-                ),
-                default_user=entry.options.get(
-                    CONF_MQTT_USER, entry.data.get(CONF_MQTT_USER, "")
-                ),
-                default_pass=entry.options.get(
-                    CONF_MQTT_PASS, entry.data.get(CONF_MQTT_PASS, "")
-                ),
-                default_topic=entry.options.get(
-                    CONF_MQTT_TOPIC, entry.data.get(CONF_MQTT_TOPIC, DEFAULT_MQTT_TOPIC)
+                default_user=reconfigure_entry.data.get(CONF_MQTT_USER, ""),
+                default_pass=reconfigure_entry.data.get(CONF_MQTT_PASS, ""),
+                default_topic=reconfigure_entry.data.get(
+                    CONF_MQTT_TOPIC, DEFAULT_MQTT_TOPIC
                 ),
             ),
             errors=errors,

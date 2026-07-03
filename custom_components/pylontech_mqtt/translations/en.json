@@ -1,7 +1,8 @@
 {
   "config": {
     "abort": {
-      "already_configured": "Device is already configured"
+      "already_configured": "Device is already configured",
+      "reconfigure_successful": "Broker settings updated successfully"
     },
     "error": {
       "already_configured": "A Pylontech entry already uses this broker and topic",
@@ -20,12 +21,8 @@
           "mqtt_pass": "Password (optional)",
           "mqtt_topic": "Topic Prefix"
         }
-      }
-    }
-  },
-  "options": {
-    "step": {
-      "init": {
+      },
+      "reconfigure": {
         "title": "Pylontech — MQTT Broker",
         "description": "Update the MQTT broker connection settings.",
         "data": {

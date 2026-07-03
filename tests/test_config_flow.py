@@ -154,28 +154,25 @@ async def test_timeout_treated_as_cannot_connect(hass: HomeAssistant) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Options flow
+# Reconfigure flow
+#
+# Updates entry.data directly (via async_update_reload_and_abort) instead of
+# stacking a second copy in entry.options — see config_flow.async_step_reconfigure.
+# A successful reconfigure returns ABORT (reason="reconfigure_successful"),
+# not CREATE_ENTRY, since it updates the existing entry rather than creating
+# a new one.
 # ---------------------------------------------------------------------------
 
 
-async def test_options_form_shown(hass: HomeAssistant) -> None:
-    """Opening the options flow must show the broker update form."""
-    with patch(_PATCH_CONN, return_value=None), patch(_PATCH_SETUP):
-        init = await hass.config_entries.flow.async_init(
-            DOMAIN, context={"source": config_entries.SOURCE_USER}
-        )
-        await hass.config_entries.flow.async_configure(init["flow_id"], _VALID_INPUT)
-
-    entry = hass.config_entries.async_entries(DOMAIN)[0]
-    result = cast(
-        dict[str, Any], await hass.config_entries.options.async_init(entry.entry_id)
+async def _start_reconfigure(hass: HomeAssistant, entry_id: str):
+    return await hass.config_entries.flow.async_init(
+        DOMAIN,
+        context={"source": config_entries.SOURCE_RECONFIGURE, "entry_id": entry_id},
     )
-    assert result["type"] == FlowResultType.FORM
-    assert result["step_id"] == "init"
 
 
-async def test_options_cannot_connect(hass: HomeAssistant) -> None:
-    """Unreachable broker in options flow must show cannot_connect error."""
+async def test_reconfigure_form_shown(hass: HomeAssistant) -> None:
+    """Starting a reconfigure flow must show the broker update form."""
     with patch(_PATCH_CONN, return_value=None), patch(_PATCH_SETUP):
         init = await hass.config_entries.flow.async_init(
             DOMAIN, context={"source": config_entries.SOURCE_USER}
@@ -183,26 +180,42 @@ async def test_options_cannot_connect(hass: HomeAssistant) -> None:
         await hass.config_entries.flow.async_configure(init["flow_id"], _VALID_INPUT)
 
     entry = hass.config_entries.async_entries(DOMAIN)[0]
-    opts = await hass.config_entries.options.async_init(entry.entry_id)
+    result = cast(dict[str, Any], await _start_reconfigure(hass, entry.entry_id))
+    assert result["type"] == FlowResultType.FORM
+    assert result["step_id"] == "reconfigure"
+
+
+async def test_reconfigure_cannot_connect(hass: HomeAssistant) -> None:
+    """Unreachable broker during reconfigure must show cannot_connect error."""
+    with patch(_PATCH_CONN, return_value=None), patch(_PATCH_SETUP):
+        init = await hass.config_entries.flow.async_init(
+            DOMAIN, context={"source": config_entries.SOURCE_USER}
+        )
+        await hass.config_entries.flow.async_configure(init["flow_id"], _VALID_INPUT)
+
+    entry = hass.config_entries.async_entries(DOMAIN)[0]
+    reconf = await _start_reconfigure(hass, entry.entry_id)
 
     with patch(_PATCH_CONN, return_value="cannot_connect"):
         result = cast(
             dict[str, Any],
-            await hass.config_entries.options.async_configure(
-                opts["flow_id"],
+            await hass.config_entries.flow.async_configure(
+                reconf["flow_id"],
                 {**_VALID_INPUT, "mqtt_host": "192.168.1.99"},
             ),
         )
     assert result["errors"]["base"] == "cannot_connect"
 
 
-async def test_options_updated_successfully(hass: HomeAssistant) -> None:
-    """Valid options update must produce a CREATE_ENTRY result."""
-    # _PATCH_SETUP must cover the full test including the entry reload triggered
-    # by saving options.  HA schedules the reload via async_create_task so it
-    # runs on the next event-loop iteration, not inline.  async_block_till_done()
-    # drains that task while the patch is still active, preventing a real paho
-    # background thread from being left alive at teardown.
+async def test_reconfigure_updates_entry_data_in_place(hass: HomeAssistant) -> None:
+    """A successful reconfigure must update entry.data — not entry.options —
+    and leave no stale copy of the old value behind."""
+    # _PATCH_SETUP must cover the full test including the entry reload
+    # triggered by a successful reconfigure. HA schedules the reload via
+    # async_create_task so it runs on the next event-loop iteration, not
+    # inline. async_block_till_done() drains that task while the patch is
+    # still active, preventing a real paho background thread from being
+    # left alive at teardown.
     with patch(_PATCH_CONN, return_value=None), patch(_PATCH_SETUP):
         init = await hass.config_entries.flow.async_init(
             DOMAIN, context={"source": config_entries.SOURCE_USER}
@@ -210,27 +223,29 @@ async def test_options_updated_successfully(hass: HomeAssistant) -> None:
         await hass.config_entries.flow.async_configure(init["flow_id"], _VALID_INPUT)
 
         entry = hass.config_entries.async_entries(DOMAIN)[0]
-        opts = await hass.config_entries.options.async_init(entry.entry_id)
+        reconf = await _start_reconfigure(hass, entry.entry_id)
 
         new_input = {**_VALID_INPUT, "mqtt_host": "192.168.1.5"}
         result = cast(
             dict[str, Any],
-            await hass.config_entries.options.async_configure(
-                opts["flow_id"], new_input
+            await hass.config_entries.flow.async_configure(
+                reconf["flow_id"], new_input
             ),
         )
         # Drain the scheduled reload task before the patch exits.
         await hass.async_block_till_done()
 
-    assert result["type"] == FlowResultType.CREATE_ENTRY
-    assert result["data"]["mqtt_host"] == "192.168.1.5"
+    assert result["type"] == FlowResultType.ABORT
+    assert result["reason"] == "reconfigure_successful"
+    assert entry.data["mqtt_host"] == "192.168.1.5"
+    assert entry.options == {}
     assert entry.unique_id == "192.168.1.5:1883:pylontech/stack"
 
 
-async def test_options_update_rejects_duplicate_effective_settings(
+async def test_reconfigure_rejects_duplicate_effective_settings(
     hass: HomeAssistant,
 ) -> None:
-    """Options changes must not allow two entries to use the same broker/topic."""
+    """Reconfiguring must not allow two entries to use the same broker/topic."""
     second_input = {**_VALID_INPUT, "mqtt_host": "192.168.1.6"}
 
     with patch(_PATCH_CONN, return_value=None), patch(_PATCH_SETUP):
@@ -245,11 +260,11 @@ async def test_options_update_rejects_duplicate_effective_settings(
         await hass.config_entries.flow.async_configure(init2["flow_id"], second_input)
 
         first_entry = hass.config_entries.async_entries(DOMAIN)[0]
-        opts = await hass.config_entries.options.async_init(first_entry.entry_id)
+        reconf = await _start_reconfigure(hass, first_entry.entry_id)
         result = cast(
             dict[str, Any],
-            await hass.config_entries.options.async_configure(
-                opts["flow_id"], second_input
+            await hass.config_entries.flow.async_configure(
+                reconf["flow_id"], second_input
             ),
         )
 
