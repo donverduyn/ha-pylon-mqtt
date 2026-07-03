@@ -179,10 +179,6 @@ class TestParsePwr:
         expected = round(sum(b.power for b in pwr_system.batteries), 1)
         assert pwr_system.power == expected
 
-    def test_raw_text_stored(self, pwr_system):
-        assert len(pwr_system.raw) > 0
-        assert "Power" in pwr_system.raw or "Volt" in pwr_system.raw
-
     # --- Absent slot handling ---
 
     def test_absent_rows_excluded(self, stub_conn):
@@ -809,13 +805,13 @@ class TestStructs:
     def test_battery_count_matches_list(self):
         system = PylontechSystem(0, 0, 0, 0, 0, 0, 0)
         system.batteries = [
-            PylontechBattery(1, 50.0, 3.0, 25.0, 85, "Charge", 150.0, "", 0.0),
-            PylontechBattery(2, 50.0, 3.0, 25.0, 84, "Charge", 150.0, "", 0.0),
+            PylontechBattery(1, 50.0, 3.0, 25.0, 85, "Charge", 150.0, 0.0),
+            PylontechBattery(2, 50.0, 3.0, 25.0, 84, "Charge", 150.0, 0.0),
         ]
         assert system.battery_count == 2
 
     def test_battery_dataclass_optional_fields_default_to_none(self):
-        bat = PylontechBattery(1, 50.0, 3.0, 25.0, 85, "Charge", 150.0, "", 0.0)
+        bat = PylontechBattery(1, 50.0, 3.0, 25.0, 85, "Charge", 150.0, 0.0)
         assert bat.temp_low is None
         assert bat.temp_high is None
         assert bat.volt_low is None
@@ -827,7 +823,7 @@ class TestStructs:
         assert bat.batt_temp_status is None
 
     def test_battery_cells_default_to_empty_list(self):
-        bat = PylontechBattery(1, 50.0, 3.0, 25.0, 85, "Charge", 150.0, "", 0.0)
+        bat = PylontechBattery(1, 50.0, 3.0, 25.0, 85, "Charge", 150.0, 0.0)
         assert bat.cells == []
 
 
@@ -911,7 +907,7 @@ class TestParseBat:
 
         # Slot 99 does not exist in the stub → "Battery 99 not found" response
         raw = _raw_command(stub_conn, "bat 99")
-        bat = PylontechBattery(99, 0, 0, 0, 0, "", 0, "", 0.0)
+        bat = PylontechBattery(99, 0, 0, 0, 0, "", 0, 0.0)
         PylontechParser.parse_bat(raw, bat)
         assert bat.cells == []
 
@@ -932,7 +928,7 @@ class TestParseBat:
             "Normal       Normal       Normal       85%        3333 mAH\r\r\n"
             "Command completed successfully\r\npylon>"
         )
-        bat = PylontechBattery(1, 0, 0, 0, 0, "", 0, "", 0.0)
+        bat = PylontechBattery(1, 0, 0, 0, 0, "", 0, 0.0)
         with caplog.at_level(logging.ERROR):
             PylontechParser.parse_bat(raw, bat)
 

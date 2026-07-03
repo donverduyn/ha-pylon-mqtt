@@ -8,6 +8,11 @@ import paho.mqtt.client as mqtt
 import voluptuous as vol
 from homeassistant import config_entries
 from homeassistant.core import callback
+from homeassistant.helpers.selector import (
+    TextSelector,
+    TextSelectorConfig,
+    TextSelectorType,
+)
 from paho.mqtt.enums import CallbackAPIVersion
 
 from .const import (
@@ -86,7 +91,9 @@ def _broker_schema(
                 int, vol.Range(min=1, max=65535)
             ),
             vol.Optional(CONF_MQTT_USER, default=default_user): str,
-            vol.Optional(CONF_MQTT_PASS, default=default_pass): str,
+            vol.Optional(CONF_MQTT_PASS, default=default_pass): TextSelector(
+                TextSelectorConfig(type=TextSelectorType.PASSWORD)
+            ),
             vol.Required(CONF_MQTT_TOPIC, default=default_topic): str,
         }
     )

@@ -196,7 +196,6 @@ class PylontechCoordinator(DataUpdateCoordinator[dict]):
             "power": 0,
             "energy_in": 0.0,
             "energy_out": 0.0,
-            "raw": "",
         }
         return {
             **required_defaults,

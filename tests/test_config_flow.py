@@ -11,11 +11,14 @@ from conftest import PATCH_SETUP as _PATCH_SETUP
 from homeassistant import config_entries
 from homeassistant.core import HomeAssistant
 from homeassistant.data_entry_flow import FlowResultType
+from homeassistant.helpers.selector import TextSelector, TextSelectorType
 
 from custom_components.pylontech_mqtt.config_flow import (
+    _broker_schema,
     _reason_code_to_error,
     _test_mqtt_connection,
 )
+from custom_components.pylontech_mqtt.const import CONF_MQTT_PASS
 
 DOMAIN = "pylontech_mqtt"
 
@@ -48,6 +51,19 @@ async def test_form_shown_on_user_step(hass: HomeAssistant) -> None:
     )
     assert result["type"] == FlowResultType.FORM
     assert result["step_id"] == "user"
+
+
+def test_password_field_is_masked() -> None:
+    """The broker password field must use a password-mode selector.
+
+    Without this, HA renders the field as a plain visible text input rather
+    than masking it like a normal password box.
+    """
+    schema = _broker_schema()
+    marker = next(k for k in schema.schema if k == CONF_MQTT_PASS)
+    validator = schema.schema[marker]
+    assert isinstance(validator, TextSelector)
+    assert validator.config["type"] == TextSelectorType.PASSWORD
 
 
 async def test_cannot_connect_shows_error(hass: HomeAssistant) -> None:

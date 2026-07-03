@@ -32,7 +32,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # Guard against old serial/TCP config entries that pre-date the MQTT refactor.
     if not _get(CONF_MQTT_HOST):
         _LOGGER.error(
-            "Pylontech config entry is missing MQTT settings (schema changed in v2.0). "
+            "Pylontech config entry is missing MQTT settings. "
             "Please delete and re-add the integration."
         )
         return False
@@ -70,17 +70,3 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     coordinator: PylontechCoordinator = hass.data[DOMAIN].pop(entry.entry_id)
     await hass.async_add_executor_job(coordinator.shutdown)
     return unload_ok
-
-
-async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
-    """Migrate an old config entry to the current schema version.
-
-    Currently a no-op placeholder — ConfigFlow.VERSION is still 1.
-    When future schema changes are introduced, migration logic goes here.
-    """
-    _LOGGER.debug(
-        "Migrating config entry from version %s.%s",
-        entry.version,
-        entry.minor_version,
-    )
-    return True

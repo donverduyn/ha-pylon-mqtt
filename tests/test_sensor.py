@@ -50,7 +50,6 @@ _BAT1 = {
     "soc": 80,
     "status": "Charge",
     "power": 512.0,
-    "raw": "",
     "cells": [_CELL0],
 }
 

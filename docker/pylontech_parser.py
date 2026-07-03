@@ -157,7 +157,6 @@ class PylontechParser:
                         soc=soc,
                         status=status,
                         power=power,
-                        raw=line.strip(),
                         energy_stored=0.0,
                         temp_low=temp_low,
                         temp_high=temp_high,
@@ -181,7 +180,6 @@ class PylontechParser:
                     continue
 
         current_system.batteries = batteries
-        current_system.raw = raw_text
 
         if valid_lines > 0:
             current_system.voltage = round(total_voltage / valid_lines, 2)

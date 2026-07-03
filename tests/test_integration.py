@@ -42,7 +42,6 @@ _PAYLOAD: dict[str, Any] = {
             "soc": 80,
             "status": "Charge",
             "power": 512.0,
-            "raw": "",
             "cells": [
                 {
                     "cell_id": 0,

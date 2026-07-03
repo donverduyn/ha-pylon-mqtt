@@ -2,7 +2,7 @@
 
 [![HACS Custom](https://img.shields.io/badge/HACS-Custom-orange.svg)](https://github.com/hacs/integration)
 
-Monitor your Pylontech US2000/US3000/US5000 battery stack in Home Assistant via a lightweight **sidecar container** that reads from the BMS and publishes data over MQTT. The HA integration subscribes to those MQTT messages — no serial port or TCP password ever stored inside Home Assistant.
+Monitor your Pylontech US2000/US3000/US5000 battery stack in Home Assistant via a lightweight **sidecar container** that reads from the BMS and publishes data over MQTT. The HA integration connects to your MQTT broker directly and subscribes to those messages — no serial port or TCP password ever stored inside Home Assistant.
 
 ## Architecture
 
@@ -26,7 +26,8 @@ The sidecar and HA are completely decoupled. You can run the sidecar on any mach
 - **Energy Dashboard Ready**: `energy_in` / `energy_out` sensors with `total_increasing` state class, ready for the HA Energy dashboard.
 - **Per-Battery Monitoring**: Voltage, Current, SOC, Temperature, Status, min/max cell values for each module.
 - **Per-Battery Capacity**: Number entity per module lets you tune the kWh capacity for accurate stored-energy calculation.
-- **Diagnostics**: Cycle count, SOH, firmware/board/comm versions, charge/discharge counters, fault event counts.
+- **Diagnostic sensors**: Cycle count, SOH, firmware/board/comm versions, charge/discharge counters, fault event counts.
+- **Diagnostics download**: Supports HA's built-in "Download diagnostics" for the config entry when reporting issues (broker password is redacted).
 - **Automatic reconnection**: The sidecar reconnects to the BMS on failure; the HA coordinator reconnects to MQTT automatically.
 - **Local push**: Data is pushed to HA the moment the sidecar receives it — no polling delay inside HA.
 
@@ -179,9 +180,9 @@ Ensure the DIP switches are configured for the correct baud rate. For US2000/US3
 ![DIP Switches](assets/dip-switches.jpg)
 *Pylontech US2000 with all DIP switches OFF*
 
-## Upgrading from v1.x
+## Upgrading from v1.x (direct serial/TCP)
 
-Version 2.0 changed the architecture: direct serial/TCP connection from HA was replaced by the MQTT sidecar model.
+Version 1.0 replaced the original direct serial/TCP connection from HA with the MQTT sidecar model described above.
 
 **Existing config entries cannot be migrated automatically.** After upgrading:
 

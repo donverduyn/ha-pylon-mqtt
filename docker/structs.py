@@ -24,7 +24,6 @@ class PylontechBattery:
     soc: int
     status: str
     power: float
-    raw: str
     energy_stored: float
 
     # Extended fields available in the pwr table (None when absent / older firmware)
@@ -88,8 +87,6 @@ class PylontechSystem:
     life_alarm_times: int | None = None
     pwr_coulomb: int | None = None  # total mAh throughput
     dsg_cap: int | None = None  # discharge capacity (mAh)
-
-    raw: str = ""
 
     batteries: list[PylontechBattery] = field(default_factory=list)
 

@@ -73,9 +73,6 @@
       "sys_bms_time": {
         "name": "BMS Time"
       },
-      "sys_raw": {
-        "name": "Raw Data"
-      },
       "sys_soc": {
         "name": "SOC"
       },
@@ -93,9 +90,6 @@
       },
       "bat_power": {
         "name": "Power"
-      },
-      "bat_raw": {
-        "name": "Raw Data"
       },
       "bat_soc": {
         "name": "SOC"

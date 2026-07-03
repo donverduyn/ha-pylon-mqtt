@@ -254,13 +254,6 @@ SYSTEM_SENSORS: tuple[SensorEntityDescription, ...] = (
         state_class=SensorStateClass.TOTAL_INCREASING,
         entity_category=EntityCategory.DIAGNOSTIC,
     ),
-    # --- Raw response (hidden by default) ---
-    SensorEntityDescription(
-        key="raw",
-        translation_key="sys_raw",
-        entity_category=EntityCategory.DIAGNOSTIC,
-        entity_registry_enabled_default=False,
-    ),
 )
 
 BATTERY_SENSORS: tuple[SensorEntityDescription, ...] = (
@@ -369,13 +362,6 @@ BATTERY_SENSORS: tuple[SensorEntityDescription, ...] = (
         key="batt_temp_status",
         translation_key="bat_btst",
         entity_category=EntityCategory.DIAGNOSTIC,
-    ),
-    # --- Raw response (hidden by default) ---
-    SensorEntityDescription(
-        key="raw",
-        translation_key="bat_raw",
-        entity_category=EntityCategory.DIAGNOSTIC,
-        entity_registry_enabled_default=False,
     ),
 )
 
