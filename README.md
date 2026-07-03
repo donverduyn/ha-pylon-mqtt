@@ -2,7 +2,7 @@
 
 [![HACS Custom](https://img.shields.io/badge/HACS-Custom-orange.svg)](https://github.com/hacs/integration)
 
-Monitor your Pylontech US2000/US3000/US5000 battery stack in Home Assistant via a lightweight **sidecar container** that reads from the BMS and publishes data over MQTT. The HA integration connects to your MQTT broker directly and subscribes to those messages — no serial port or TCP password ever stored inside Home Assistant.
+Monitor your Pylontech US2000/US3000/US5000 battery stack in Home Assistant via a lightweight **sidecar container** that reads from the BMS and publishes data over MQTT. The HA integration connects to your MQTT broker directly and subscribes to those messages. Direct access to the BMS hardware (the serial port or TCP bridge) is restricted to the sidecar container and never touches Home Assistant at all — the MQTT broker password, however, is stored in HA, since the integration connects to the broker itself rather than routing through Home Assistant's own MQTT integration.
 
 ## Architecture
 
@@ -21,7 +21,7 @@ The sidecar and HA are completely decoupled. You can run the sidecar on any mach
 
 ## Features
 
-- **No credentials in HA**: Serial port, TCP host, and any passwords live only in the sidecar container's environment variables.
+- **No BMS hardware access in HA**: The serial port device path, TCP bridge host, and any hardware-side passwords live only in the sidecar container's environment variables — Home Assistant never talks to the BMS directly. (The MQTT broker password *is* stored in HA, masked in the UI and redacted from diagnostics — see the Setup steps below.)
 - **Serial & TCP support**: Connect via a USB-to-RS232 cable or a serial-over-TCP bridge.
 - **Energy Dashboard Ready**: `energy_in` / `energy_out` sensors with `total_increasing` state class, ready for the HA Energy dashboard.
 - **Per-Battery Monitoring**: Voltage, Current, SOC, Temperature, Status, min/max cell values for each module.
