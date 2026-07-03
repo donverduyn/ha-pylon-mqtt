@@ -1,6 +1,7 @@
 """Config flow for the Pylontech MQTT integration."""
 
 import asyncio
+import logging
 import time
 
 import paho.mqtt.client as mqtt
@@ -19,6 +20,8 @@ from .const import (
     DEFAULT_MQTT_TOPIC,
     DOMAIN,
 )
+
+_LOGGER = logging.getLogger(__name__)
 
 
 def _test_mqtt_connection(
@@ -56,8 +59,8 @@ def _test_mqtt_connection(
     try:
         client.disconnect()
         client.loop(timeout=0.2)
-    except Exception:
-        pass
+    except Exception as err:
+        _LOGGER.debug("Ignoring error during MQTT client cleanup: %s", err)
 
     return None if outcome[0] == "ok" else (outcome[0] or "cannot_connect")
 

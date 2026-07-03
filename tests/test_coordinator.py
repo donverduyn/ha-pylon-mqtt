@@ -394,3 +394,53 @@ class TestAvailability:
         await hass.async_block_till_done()
         assert coordinator.data is not None
         assert coordinator.last_update_success is True
+
+
+# ---------------------------------------------------------------------------
+# _on_message error handling — malformed payloads
+# ---------------------------------------------------------------------------
+
+
+class TestOnMessageErrors:
+    async def test_non_utf8_avail_payload_treated_as_offline(
+        self, hass: HomeAssistant, coordinator: PylontechCoordinator
+    ) -> None:
+        """A non-UTF-8 payload on the availability topic must be treated as offline."""
+        coordinator.last_update_success = True
+        coordinator._on_message(
+            None,
+            None,
+            SimpleNamespace(
+                topic="pylontech/stack/availability", payload=b"\xff\xfe"
+            ),
+        )
+        await hass.async_block_till_done()
+        assert coordinator.last_update_success is False
+
+    async def test_invalid_json_state_payload_does_not_crash(
+        self, hass: HomeAssistant, coordinator: PylontechCoordinator
+    ) -> None:
+        """An invalid JSON payload on the state topic must not raise or update state."""
+        coordinator._on_message(
+            None,
+            None,
+            SimpleNamespace(
+                topic="pylontech/stack/state", payload=b"not-json{}"
+            ),
+        )
+        await hass.async_block_till_done()
+        assert coordinator.data is None
+
+    async def test_non_utf8_state_payload_does_not_crash(
+        self, hass: HomeAssistant, coordinator: PylontechCoordinator
+    ) -> None:
+        """A non-UTF-8 payload on the state topic must not raise."""
+        coordinator._on_message(
+            None,
+            None,
+            SimpleNamespace(
+                topic="pylontech/stack/state", payload=b"\xff\xfe"
+            ),
+        )
+        await hass.async_block_till_done()
+        assert coordinator.data is None

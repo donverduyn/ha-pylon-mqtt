@@ -847,15 +847,17 @@ class TestParseSpecCapacity:
         """Non-integer voltage (e.g. some LiFePO4 stacks use 51.2 V nominal)."""
         assert parse_spec_capacity("51.2V/100AH") == pytest.approx(5.12)
 
-    def test_unparseable_returns_none(self):
-        assert parse_spec_capacity("UNKNOWN") is None
+    def test_unparseable_raises_value_error(self):
+        with pytest.raises(ValueError):
+            parse_spec_capacity("UNKNOWN")
 
     def test_empty_returns_none(self):
         assert parse_spec_capacity("") is None
 
-    def test_partial_spec_returns_none(self):
+    def test_partial_spec_raises_value_error(self):
         """Only voltage present, no Ah component."""
-        assert parse_spec_capacity("48V") is None
+        with pytest.raises(ValueError):
+            parse_spec_capacity("48V")
 
 
 # ===========================================================================

@@ -459,14 +459,15 @@ async def async_setup_entry(
         for desc in SYSTEM_SENSORS
     )
 
-    # Per-battery sensors are added dynamically: the number of modules is not
-    # known until the first MQTT message arrives from the sidecar.
+    # Per-battery and per-cell sensors are added dynamically: module count and
+    # cell count are not known until MQTT messages arrive from the sidecar.
     seen_bat_ids: set[int] = set()
+    seen_cell_ids: dict[int, set[int]] = {}  # bat_id → set of seen cell_ids
 
-    def _add_new_batteries() -> None:
+    def _add_new_entities() -> None:
         if not coordinator.data:
             return
-        new_entities: list[PylontechBatterySensor] = []
+        new_entities: list = []
         for bat in coordinator.data.get("batteries", []):
             if bat.get("sys_id") not in seen_bat_ids:
                 seen_bat_ids.add(bat.get("sys_id"))
@@ -476,19 +477,6 @@ async def async_setup_entry(
                     )
                     for desc in BATTERY_SENSORS
                 )
-        if new_entities:
-            async_add_entities(new_entities)
-
-    # Per-cell sensors are added dynamically: cell count is not known until the
-    # first MQTT message that includes cell-level data from the sidecar's bat N
-    # commands.
-    seen_cell_ids: dict[int, set[int]] = {}  # bat_id → set of seen cell_ids
-
-    def _add_new_cells() -> None:
-        if not coordinator.data:
-            return
-        new_entities: list[PylontechCellSensor] = []
-        for bat in coordinator.data.get("batteries", []):
             bat_cells = seen_cell_ids.setdefault(bat.get("sys_id"), set())
             for cell in bat.get("cells", []):
                 if cell.get("cell_id") not in bat_cells:
@@ -506,10 +494,8 @@ async def async_setup_entry(
         if new_entities:
             async_add_entities(new_entities)
 
-    _add_new_batteries()
-    _add_new_cells()
-    entry.async_on_unload(coordinator.async_add_listener(_add_new_batteries))
-    entry.async_on_unload(coordinator.async_add_listener(_add_new_cells))
+    _add_new_entities()
+    entry.async_on_unload(coordinator.async_add_listener(_add_new_entities))
 
 
 # ---------------------------------------------------------------------------

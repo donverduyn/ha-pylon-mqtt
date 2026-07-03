@@ -71,8 +71,11 @@ class PylontechCoordinator(DataUpdateCoordinator[dict]):
     def shutdown(self) -> None:
         """Disconnect from the MQTT broker."""
         if self._client is not None:
-            self._client.loop_stop()
-            self._client.disconnect()
+            try:
+                self._client.loop_stop()
+                self._client.disconnect()
+            except Exception as err:
+                _LOGGER.debug("Error during MQTT client shutdown: %s", err)
             self._client = None
 
     # ------------------------------------------------------------------
@@ -94,7 +97,7 @@ class PylontechCoordinator(DataUpdateCoordinator[dict]):
 
     def _on_message(self, client, userdata, msg):
         if msg.topic == self._avail_topic:
-            if msg.payload.decode() == "online":
+            if msg.payload.decode("utf-8", errors="replace") == "online":
                 if self.data is not None:
                     self.hass.loop.call_soon_threadsafe(self._mark_available)
             else:
@@ -103,8 +106,8 @@ class PylontechCoordinator(DataUpdateCoordinator[dict]):
 
         try:
             payload = json.loads(msg.payload.decode())
-        except Exception as err:
-            _LOGGER.error("Error decoding MQTT message: %s", err, exc_info=True)
+        except (UnicodeDecodeError, json.JSONDecodeError) as err:
+            _LOGGER.error("Error decoding MQTT message: %s", err)
             return
 
         # Hand off to the HA event loop — all state mutations (deserialization,
@@ -121,8 +124,11 @@ class PylontechCoordinator(DataUpdateCoordinator[dict]):
             # number entities are pre-filled on first discovery instead of
             # defaulting to the US2000 fallback.
             if not self._auto_capacity_set and system.get("spec"):
-                derived = parse_spec_capacity(system["spec"])
-                if derived is not None:
+                try:
+                    derived = parse_spec_capacity(system["spec"])
+                except ValueError:
+                    _LOGGER.debug("Could not parse battery spec '%s'", system["spec"])
+                else:
                     self.default_capacity = derived
                     self._auto_capacity_set = True
                     _LOGGER.debug(

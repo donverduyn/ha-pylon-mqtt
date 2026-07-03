@@ -7,6 +7,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .const import DOMAIN
+from .coordinator import PylontechCoordinator
 from .entity import PylontechBatteryEntity
 
 
@@ -42,7 +43,12 @@ async def async_setup_entry(
 class PylontechBatteryCapacityNumber(PylontechBatteryEntity, RestoreNumber):
     """Representation of a Per-Battery Capacity Number."""
 
-    def __init__(self, coordinator, unique_id_prefix, bat_id):
+    def __init__(
+        self,
+        coordinator: PylontechCoordinator,
+        unique_id_prefix: str,
+        bat_id: int,
+    ) -> None:
         super().__init__(coordinator, bat_id)
 
         self._attr_unique_id = f"{unique_id_prefix}_bat{bat_id}_capacity"
@@ -52,7 +58,7 @@ class PylontechBatteryCapacityNumber(PylontechBatteryEntity, RestoreNumber):
         self._attr_entity_category = EntityCategory.CONFIG
 
         self._attr_native_min_value = 0.5
-        self._attr_native_max_value = 10.0
+        self._attr_native_max_value = 20.0
         self._attr_native_step = 0.1
         self._attr_mode = NumberMode.BOX
 

@@ -153,8 +153,8 @@ class BmsConnection:
             if conn is not None:
                 try:
                     conn.close()
-                except Exception:
-                    pass
+                except Exception as err:
+                    _LOGGER.debug("Error closing BMS connection: %s", err)
         self._tcp = None
         self._serial = None
 
