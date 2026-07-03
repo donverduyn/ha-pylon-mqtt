@@ -21,7 +21,6 @@
     "**/.hg": true,
     "**/.DS_Store": true,
     "**/Thumbs.db": true,
-    "**/.venv": true,
     "**/.ruff_cache": true,
     "**/.pytest_cache": true,
     "**/__pycache__": true
