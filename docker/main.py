@@ -32,8 +32,8 @@ from typing import Optional
 
 import paho.mqtt.client as mqtt
 import serial
+from pylontech_parser import PylontechParser
 from paho.mqtt.enums import CallbackAPIVersion
-from pylon_parser import PylontechParser
 from structs import PylontechSystem
 
 # ---------------------------------------------------------------------------
@@ -122,7 +122,8 @@ class BmsConnection:
         """Send a command and return the ASCII response."""
         self._ensure_open()
         if CONNECTION_TYPE == "tcp":
-            assert self._tcp is not None
+            if self._tcp is None:
+                raise RuntimeError("TCP socket is not open")
             self._tcp.sendall((cmd + "\n").encode("ascii"))
             time.sleep(1.0)
             data = b""
@@ -137,7 +138,8 @@ class BmsConnection:
                 pass
             return data.decode("ascii", errors="ignore")
         else:
-            assert self._serial is not None
+            if self._serial is None:
+                raise RuntimeError("Serial port is not open")
             self._serial.reset_input_buffer()
             self._serial.write(b"\n")
             time.sleep(0.1)
@@ -192,6 +194,20 @@ def main() -> None:
     if CONNECTION_TYPE == "tcp" and not TCP_HOST:
         _LOGGER.error("TCP_HOST is required when CONNECTION_TYPE=tcp")
         sys.exit(1)
+    if CONNECTION_TYPE == "serial" and not SERIAL_PORT:
+        _LOGGER.error("SERIAL_PORT must not be empty")
+        sys.exit(1)
+    if not (1 <= MQTT_PORT_ENV <= 65535):
+        _LOGGER.error("MQTT_PORT must be between 1 and 65535 (got %d)", MQTT_PORT_ENV)
+        sys.exit(1)
+    if BAUD_RATE <= 0:
+        _LOGGER.error("BAUD_RATE must be a positive integer (got %d)", BAUD_RATE)
+        sys.exit(1)
+    if POLL_INTERVAL <= 0:
+        _LOGGER.error(
+            "POLL_INTERVAL must be a positive integer (got %d)", POLL_INTERVAL
+        )
+        sys.exit(1)
 
     _LOGGER.info(
         "Starting pylon2mqtt | connection=%s | MQTT=%s:%d | topic=%s | poll=%ds",
@@ -221,13 +237,19 @@ def main() -> None:
     client.on_connect = on_connect
     client.on_disconnect = on_disconnect
 
+    _retry_delay = 5
     while True:
         try:
             client.connect(MQTT_BROKER, MQTT_PORT_ENV, 60)
             break
         except Exception as err:
-            _LOGGER.error("Cannot connect to MQTT broker: %s — retrying in 10 s", err)
-            time.sleep(10)
+            _LOGGER.error(
+                "Cannot connect to MQTT broker: %s — retrying in %d s",
+                err,
+                _retry_delay,
+            )
+            time.sleep(_retry_delay)
+            _retry_delay = min(_retry_delay * 2, 120)
 
     client.loop_start()
 

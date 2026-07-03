@@ -17,8 +17,8 @@ from conftest import (
     STUB_SOC_START,
     _raw_command,
 )
+from pylontech_parser import PylontechParser
 from pylontech_mqtt.capacity import parse_spec_capacity
-from pylon_parser import PylontechParser
 from structs import PylontechBattery, PylontechSystem
 
 
@@ -933,7 +933,7 @@ class TestParseBat:
 
     def test_absent_battery_has_no_cells(self, stub_conn):
         """Requesting 'bat N' for an absent/unknown slot must yield an empty cell list."""
-        from pylon_parser import PylontechParser
+        from pylontech_parser import PylontechParser
         from structs import PylontechBattery
 
         # Slot 99 does not exist in the stub → "Battery 99 not found" response
@@ -946,7 +946,7 @@ class TestParseBat:
         """A non-numeric voltage in a cell row must be skipped, not crash."""
         import logging
 
-        from pylon_parser import PylontechParser
+        from pylontech_parser import PylontechParser
         from structs import PylontechBattery
 
         raw = (

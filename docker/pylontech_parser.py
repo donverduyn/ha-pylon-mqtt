@@ -224,19 +224,25 @@ class PylontechParser:
                 try:
                     system.cell_count = int(val)
                 except (ValueError, AttributeError):
-                    pass
+                    _LOGGER.warning(
+                        "Could not parse cell number from info line: %r", val
+                    )
             elif "max dischg curr" in key:
                 try:
                     system.max_dischg_curr = (
                         abs(int(re.sub(r"[^\d-]", "", val))) / 1000.0
                     )
                 except (ValueError, AttributeError):
-                    pass
+                    _LOGGER.warning(
+                        "Could not parse max discharge current from info line: %r", val
+                    )
             elif "max charge curr" in key:
                 try:
                     system.max_charge_curr = int(re.sub(r"\D", "", val)) / 1000.0
                 except (ValueError, AttributeError):
-                    pass
+                    _LOGGER.warning(
+                        "Could not parse max charge current from info line: %r", val
+                    )
 
         return system
 

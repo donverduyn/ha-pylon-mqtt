@@ -4,7 +4,7 @@ Shared pytest fixtures and import bootstrap for ha-pylontech-mqtt tests.
 
 The custom_components package pulls in `homeassistant` at __init__.py time,
 which is not available outside HA.  We bypass __init__.py by registering a
-namespace package manually in sys.modules, then loading parser.py / structs.py
+namespace package manually in sys.modules, then loading pylontech_parser.py / structs.py
 directly via importlib.  Both files have zero HA dependencies.
 """
 
@@ -217,7 +217,7 @@ def stub_conn(stub_server):
 # ---------------------------------------------------------------------------
 @pytest.fixture(scope="session")
 def pwr_system(_session_conn):
-    from pylon_parser import PylontechParser
+    from pylontech_parser import PylontechParser
 
     raw = _raw_command(_session_conn, "pwr")
     return PylontechParser.parse_pwr(raw)
@@ -225,7 +225,7 @@ def pwr_system(_session_conn):
 
 @pytest.fixture(scope="session")
 def info_system(_session_conn):
-    from pylon_parser import PylontechParser
+    from pylontech_parser import PylontechParser
     from structs import PylontechSystem
 
     raw = _raw_command(_session_conn, "info")
@@ -235,7 +235,7 @@ def info_system(_session_conn):
 
 @pytest.fixture(scope="session")
 def stat_system(_session_conn):
-    from pylon_parser import PylontechParser
+    from pylontech_parser import PylontechParser
     from structs import PylontechSystem
 
     raw = _raw_command(_session_conn, "stat")
@@ -245,7 +245,7 @@ def stat_system(_session_conn):
 
 @pytest.fixture(scope="session")
 def time_system(_session_conn):
-    from pylon_parser import PylontechParser
+    from pylontech_parser import PylontechParser
     from structs import PylontechSystem
 
     raw = _raw_command(_session_conn, "time")
@@ -257,7 +257,7 @@ def time_system(_session_conn):
 def bat_battery(_session_conn, pwr_system):
     """Return the first battery from pwr_system with its cells populated
     by parsing the 'bat 1' response from the stub."""
-    from pylon_parser import PylontechParser
+    from pylontech_parser import PylontechParser
 
     bat = pwr_system.batteries[0]
     raw = _raw_command(_session_conn, f"bat {bat.sys_id}")
