@@ -2,9 +2,12 @@
 
 import json
 import logging
+import time
+from datetime import timedelta
 
 import paho.mqtt.client as mqtt
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, callback
+from homeassistant.helpers.event import async_track_time_interval
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 from paho.mqtt.enums import CallbackAPIVersion
 
@@ -17,6 +20,15 @@ _LOGGER = logging.getLogger(__name__)
 class PylontechCoordinator(DataUpdateCoordinator[dict]):
     """Receive Pylontech BMS data pushed via MQTT from the sidecar container."""
 
+    # A stuck sidecar poll loop stops publishing entirely (no more "online"
+    # LWT, no more state messages) while its MQTT connection stays up, so
+    # neither the LWT nor _on_disconnect ever fires to mark it unavailable.
+    # This is a periodic backstop for that specific failure mode — a
+    # multiple of any reasonable POLL_INTERVAL, generous enough to tolerate
+    # normal broker hiccups without flapping availability.
+    _STALE_TIMEOUT_SECONDS = 300
+    _WATCHDOG_INTERVAL_SECONDS = 60
+
     def __init__(
         self,
         hass: HomeAssistant,
@@ -26,6 +38,7 @@ class PylontechCoordinator(DataUpdateCoordinator[dict]):
         mqtt_pass: str,
         topic_prefix: str,
         stack_id: str,
+        mqtt_tls: bool = False,
         default_capacity: float = DEFAULT_BATTERY_CAPACITY,
     ) -> None:
         # No update_interval — data arrives via push, not polling.
@@ -35,11 +48,14 @@ class PylontechCoordinator(DataUpdateCoordinator[dict]):
         self._mqtt_port = mqtt_port
         self._mqtt_user = mqtt_user
         self._mqtt_pass = mqtt_pass
+        self._mqtt_tls = mqtt_tls
         self.topic_prefix = topic_prefix
         self.stack_id = stack_id
         self._state_topic = f"{topic_prefix}/state"
         self._avail_topic = f"{topic_prefix}/availability"
         self._client: mqtt.Client | None = None
+        self._last_message_monotonic: float | None = None
+        self._unsub_watchdog = None
 
         self.default_capacity = default_capacity
         self.battery_capacities: dict[int, float] = {}
@@ -61,6 +77,8 @@ class PylontechCoordinator(DataUpdateCoordinator[dict]):
         client = mqtt.Client(CallbackAPIVersion.VERSION2)
         if self._mqtt_user:
             client.username_pw_set(self._mqtt_user, self._mqtt_pass)
+        if self._mqtt_tls:
+            client.tls_set()
         client.reconnect_delay_set(min_delay=5, max_delay=120)
         client.on_connect = self._on_connect
         client.on_message = self._on_message
@@ -71,8 +89,21 @@ class PylontechCoordinator(DataUpdateCoordinator[dict]):
         self._client = client
         client.loop_start()
 
+        # setup() runs on the event loop (see the caller in __init__.py), so
+        # this can be registered directly.
+        self._unsub_watchdog = async_track_time_interval(
+            self.hass,
+            self._check_staleness,
+            timedelta(seconds=self._WATCHDOG_INTERVAL_SECONDS),
+        )
+
     def shutdown(self) -> None:
         """Disconnect from the MQTT broker."""
+        if self._unsub_watchdog is not None:
+            # shutdown() runs in an executor thread (see the caller in
+            # __init__.py), but the unsub callback is event-loop-only.
+            self.hass.loop.call_soon_threadsafe(self._unsub_watchdog)
+            self._unsub_watchdog = None
         if self._client is not None:
             try:
                 self._client.loop_stop()
@@ -104,6 +135,11 @@ class PylontechCoordinator(DataUpdateCoordinator[dict]):
         self.hass.loop.call_soon_threadsafe(self._mark_unavailable)
 
     def _on_message(self, client, userdata, msg):
+        # Any message at all — state or availability — proves the sidecar's
+        # poll loop is still alive and publishing; feeds the staleness
+        # watchdog below.
+        self._last_message_monotonic = time.monotonic()
+
         if msg.topic == self._avail_topic:
             if msg.payload.decode("utf-8", errors="replace") == "online":
                 # Mark available immediately — do not gate on data being present.
@@ -185,6 +221,27 @@ class PylontechCoordinator(DataUpdateCoordinator[dict]):
     def _mark_unavailable(self) -> None:
         self.last_update_success = False
         self.async_update_listeners()
+
+    @callback
+    def _check_staleness(self, now) -> None:
+        """Mark unavailable if no MQTT message has arrived in a while.
+
+        Runs on a timer rather than reacting to an event, because there is
+        no event to react to: a hung sidecar poll loop keeps its MQTT
+        connection open (so no disconnect/LWT fires) while simply never
+        publishing again, and nothing else here would ever notice.
+        """
+        if not self.last_update_success or self._last_message_monotonic is None:
+            return
+        elapsed = time.monotonic() - self._last_message_monotonic
+        if elapsed > self._STALE_TIMEOUT_SECONDS:
+            _LOGGER.warning(
+                "No MQTT message received in %.0fs (threshold %ds) — "
+                "marking unavailable",
+                elapsed,
+                self._STALE_TIMEOUT_SECONDS,
+            )
+            self._mark_unavailable()
 
     def _deserialize(self, data: dict) -> dict:
         """Normalise the JSON payload dict, injecting energy_stored defaults."""

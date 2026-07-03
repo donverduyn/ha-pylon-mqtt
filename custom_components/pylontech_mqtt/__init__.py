@@ -11,6 +11,7 @@ from .const import (
     CONF_MQTT_HOST,
     CONF_MQTT_PASS,
     CONF_MQTT_PORT,
+    CONF_MQTT_TLS,
     CONF_MQTT_TOPIC,
     CONF_MQTT_USER,
     DEFAULT_MQTT_PORT,
@@ -137,6 +138,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         mqtt_pass=entry.data.get(CONF_MQTT_PASS, ""),
         topic_prefix=topic_prefix,
         stack_id=stack_id_from_broker(mqtt_host, mqtt_port, topic_prefix),
+        mqtt_tls=entry.data.get(CONF_MQTT_TLS, False),
     )
 
     # connect_async + loop_start are non-blocking; no executor needed.

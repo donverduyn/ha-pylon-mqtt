@@ -15,6 +15,7 @@ All configuration is via environment variables:
   MQTT_USER         : MQTT username (optional)
   MQTT_PASS         : MQTT password (optional)
   MQTT_TOPIC_PREFIX : base MQTT topic, default "pylontech/stack"
+  MQTT_TLS          : "true" to connect over TLS, default "false"
 
   POLL_INTERVAL     : seconds between polls, default 15
   AUTO_SYNC_TIME    : "true" to sync BMS clock on startup, default "false"
@@ -33,7 +34,7 @@ from typing import Optional
 
 import paho.mqtt.client as mqtt
 import serial
-from paho.mqtt.enums import CallbackAPIVersion
+from paho.mqtt.enums import CallbackAPIVersion, MQTTErrorCode
 from pylontech_parser import PylontechParser
 from structs import PylontechSystem
 
@@ -79,6 +80,7 @@ MQTT_PORT_ENV = _int_env("MQTT_PORT", 1883)
 MQTT_USER = os.getenv("MQTT_USER", "")
 MQTT_PASS = os.getenv("MQTT_PASS", "")
 MQTT_TOPIC_PREFIX = os.getenv("MQTT_TOPIC_PREFIX", "pylontech/stack")
+MQTT_TLS = os.getenv("MQTT_TLS", "false").lower() == "true"
 
 POLL_INTERVAL = _int_env("POLL_INTERVAL", 15)
 AUTO_SYNC_TIME = os.getenv("AUTO_SYNC_TIME", "false").lower() == "true"
@@ -349,6 +351,27 @@ class EnergyTracker:
 # ---------------------------------------------------------------------------
 
 
+def _build_mqtt_client() -> mqtt.Client:
+    """Construct the sidecar's paho client with auth, TLS, and LWT applied."""
+    client = mqtt.Client(CallbackAPIVersion.VERSION2)
+    if MQTT_USER:
+        client.username_pw_set(MQTT_USER, MQTT_PASS)
+    if MQTT_TLS:
+        client.tls_set()
+    client.will_set(AVAIL_TOPIC, "offline", retain=True)
+    return client
+
+
+def _publish_succeeded(*infos: "mqtt.MQTTMessageInfo") -> bool:
+    """Return whether every publish() call in *infos* was actually sent.
+
+    publish() returns MQTT_ERR_NO_CONN (it does not raise) when the client
+    isn't currently connected — the message is dropped, not queued — so
+    callers must check this before logging a payload as delivered.
+    """
+    return all(info.rc == MQTTErrorCode.MQTT_ERR_SUCCESS for info in infos)
+
+
 def _clean_shutdown(client: mqtt.Client, bms: "BmsConnection") -> None:
     """Publish offline, disconnect MQTT, and close the BMS link, then exit(0).
 
@@ -410,10 +433,7 @@ def main() -> None:
     )
 
     # -- MQTT setup --
-    client = mqtt.Client(CallbackAPIVersion.VERSION2)
-    if MQTT_USER:
-        client.username_pw_set(MQTT_USER, MQTT_PASS)
-    client.will_set(AVAIL_TOPIC, "offline", retain=True)
+    client = _build_mqtt_client()
 
     def on_connect(c, userdata, flags, reason_code, properties):  # noqa: ANN001
         if reason_code.is_failure:
@@ -500,17 +520,25 @@ def main() -> None:
             system.energy_out = round(energy.energy_out, 3)
 
             payload = json.dumps(asdict(system), default=str)
-            client.publish(STATE_TOPIC, payload, retain=True)
-            client.publish(AVAIL_TOPIC, "online", retain=True)
-            _LOGGER.info(
-                "Published | V=%.2fV I=%.2fA SOC=%.1f%% P=%.1fW batteries=%d cells=%d",
-                system.voltage,
-                system.current,
-                system.soc,
-                system.power,
-                len(system.batteries),
-                sum(len(b.cells) for b in system.batteries),
-            )
+            state_info = client.publish(STATE_TOPIC, payload, retain=True)
+            avail_info = client.publish(AVAIL_TOPIC, "online", retain=True)
+            if not _publish_succeeded(state_info, avail_info):
+                _LOGGER.warning(
+                    "MQTT publish failed (state rc=%s, availability rc=%s) — "
+                    "client not connected; this reading was not delivered",
+                    state_info.rc,
+                    avail_info.rc,
+                )
+            else:
+                _LOGGER.info(
+                    "Published | V=%.2fV I=%.2fA SOC=%.1f%% P=%.1fW batteries=%d cells=%d",
+                    system.voltage,
+                    system.current,
+                    system.soc,
+                    system.power,
+                    len(system.batteries),
+                    sum(len(b.cells) for b in system.batteries),
+                )
 
         except (serial.SerialException, OSError, IOError) as err:
             _LOGGER.error("BMS connection error: %s — reconnecting in 5 s", err)

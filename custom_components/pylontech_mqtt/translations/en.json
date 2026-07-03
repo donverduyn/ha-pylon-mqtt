@@ -20,7 +20,8 @@
           "mqtt_port": "Broker Port",
           "mqtt_user": "Username (optional)",
           "mqtt_pass": "Password (optional)",
-          "mqtt_topic": "Topic Prefix"
+          "mqtt_topic": "Topic Prefix",
+          "mqtt_tls": "Use TLS"
         }
       },
       "reconfigure": {
@@ -31,7 +32,8 @@
           "mqtt_port": "Broker Port",
           "mqtt_user": "Username (optional)",
           "mqtt_pass": "Password (optional)",
-          "mqtt_topic": "Topic Prefix"
+          "mqtt_topic": "Topic Prefix",
+          "mqtt_tls": "Use TLS"
         }
       }
     }

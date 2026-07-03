@@ -6,7 +6,9 @@ The coordinator's MQTT client is never started (no ``setup()`` call), so these
 tests exercise the pure-logic methods in isolation.
 """
 
+import time
 from types import SimpleNamespace
+from unittest.mock import patch
 
 import pytest
 from conftest import make_coordinator
@@ -57,6 +59,32 @@ async def coordinator(hass: HomeAssistant) -> PylontechCoordinator:
 # ---------------------------------------------------------------------------
 # _deserialize
 # ---------------------------------------------------------------------------
+
+
+class TestTlsSetup:
+    """Whether setup() enables TLS on the paho client (see coordinator.setup)."""
+
+    async def test_tls_enabled_calls_tls_set(self, hass: HomeAssistant) -> None:
+        coord = make_coordinator(hass, mqtt_tls=True)
+        with patch(
+            "custom_components.pylontech_mqtt.coordinator.mqtt.Client"
+        ) as mock_client_cls:
+            coord.setup()
+            mock_client_cls.return_value.tls_set.assert_called_once()
+            coord.shutdown()
+            await hass.async_block_till_done()
+
+    async def test_tls_disabled_does_not_call_tls_set(
+        self, hass: HomeAssistant
+    ) -> None:
+        coord = make_coordinator(hass, mqtt_tls=False)
+        with patch(
+            "custom_components.pylontech_mqtt.coordinator.mqtt.Client"
+        ) as mock_client_cls:
+            coord.setup()
+            mock_client_cls.return_value.tls_set.assert_not_called()
+            coord.shutdown()
+            await hass.async_block_till_done()
 
 
 class TestDeserialize:
@@ -419,6 +447,78 @@ class TestAvailability:
         )
         await hass.async_block_till_done()
         assert coordinator.last_update_success is False
+
+
+# ---------------------------------------------------------------------------
+# Staleness watchdog (_check_staleness) — catches a sidecar poll loop that
+# hangs while its MQTT connection stays up, so no LWT/disconnect ever fires.
+# ---------------------------------------------------------------------------
+
+
+class TestStalenessWatchdog:
+    async def test_any_message_updates_last_message_time(
+        self, coordinator: PylontechCoordinator
+    ) -> None:
+        assert coordinator._last_message_monotonic is None
+        coordinator._on_message(
+            None, None, _msg("pylontech/stack/availability", "online")
+        )
+        assert coordinator._last_message_monotonic is not None
+
+    async def test_stale_last_message_marks_unavailable(
+        self, coordinator: PylontechCoordinator
+    ) -> None:
+        coordinator.last_update_success = True
+        coordinator._last_message_monotonic = (
+            time.monotonic() - coordinator._STALE_TIMEOUT_SECONDS - 1
+        )
+        coordinator._check_staleness(None)
+        assert coordinator.last_update_success is False
+
+    async def test_recent_last_message_stays_available(
+        self, coordinator: PylontechCoordinator
+    ) -> None:
+        coordinator.last_update_success = True
+        coordinator._last_message_monotonic = time.monotonic() - 5
+        coordinator._check_staleness(None)
+        assert coordinator.last_update_success is True
+
+    async def test_no_message_ever_received_does_not_crash(
+        self, coordinator: PylontechCoordinator
+    ) -> None:
+        """Before the first message, _last_message_monotonic is None — the
+        watchdog must be a no-op, not raise on the None subtraction."""
+        assert coordinator._last_message_monotonic is None
+        coordinator._check_staleness(None)
+        assert coordinator.last_update_success is False
+
+    async def test_already_unavailable_is_left_alone(
+        self, coordinator: PylontechCoordinator
+    ) -> None:
+        """No point re-marking or re-warning about an already-unavailable
+        coordinator — the guard should skip work entirely."""
+        coordinator.last_update_success = False
+        coordinator._last_message_monotonic = (
+            time.monotonic() - coordinator._STALE_TIMEOUT_SECONDS - 1
+        )
+        coordinator._check_staleness(None)
+        assert coordinator.last_update_success is False
+
+    async def test_setup_registers_watchdog_and_shutdown_cancels_it(
+        self, hass: HomeAssistant
+    ) -> None:
+        coord = make_coordinator(hass)
+        with patch("custom_components.pylontech_mqtt.coordinator.mqtt.Client"), patch(
+            "custom_components.pylontech_mqtt.coordinator.async_track_time_interval"
+        ) as mock_track:
+            mock_unsub = mock_track.return_value
+            coord.setup()
+            mock_track.assert_called_once()
+            assert mock_track.call_args.args[1] == coord._check_staleness
+
+            coord.shutdown()
+            await hass.async_block_till_done()
+            mock_unsub.assert_called_once()
 
     async def test_online_after_offline_restores_available(
         self, hass: HomeAssistant, coordinator: PylontechCoordinator

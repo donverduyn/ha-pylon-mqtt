@@ -150,6 +150,26 @@ async def test_successful_entry_created(hass: HomeAssistant) -> None:
     assert result["data"]["mqtt_host"] == "localhost"
     assert result["data"]["mqtt_port"] == 1883
     assert result["data"]["mqtt_topic"] == "pylontech/stack"
+    assert result["data"]["mqtt_tls"] is False
+
+
+async def test_tls_toggle_persists_to_entry_data(hass: HomeAssistant) -> None:
+    """Enabling the TLS toggle must persist through to entry.data, and the
+    connection test must be run with TLS enabled."""
+    with patch(_PATCH_CONN) as mock_conn, patch(_PATCH_SETUP):
+        mock_conn.return_value = None
+        init = await hass.config_entries.flow.async_init(
+            DOMAIN, context={"source": config_entries.SOURCE_USER}
+        )
+        result = cast(
+            dict[str, Any],
+            await hass.config_entries.flow.async_configure(
+                init["flow_id"], {**_VALID_INPUT, "mqtt_tls": True}
+            ),
+        )
+    assert result["type"] == FlowResultType.CREATE_ENTRY
+    assert result["data"]["mqtt_tls"] is True
+    assert mock_conn.call_args.args[-1] is True
 
 
 async def test_duplicate_host_port_topic_aborts(hass: HomeAssistant) -> None:
@@ -371,6 +391,44 @@ def test_empty_hostname_returns_cannot_connect() -> None:
     """
     result = _test_mqtt_connection("", 1883)
     assert result == "cannot_connect"
+
+
+def _mock_client_with_immediate_connack(mock_client_cls) -> None:
+    """Make a mocked mqtt.Client's connect() synchronously fire on_connect
+    with a successful CONNACK, so _test_mqtt_connection's polling loop
+    returns immediately instead of idling for its full 5s deadline."""
+    mock_client = mock_client_cls.return_value
+
+    def _fake_connect(host, port, keepalive=10):
+        reason_code = SimpleNamespace(is_failure=False, value=0)
+        mock_client.on_connect(mock_client, None, None, reason_code, None)
+
+    mock_client.connect.side_effect = _fake_connect
+
+
+def test_tls_enabled_calls_tls_set() -> None:
+    """use_tls=True must enable TLS on the paho client before connecting —
+    otherwise the broker password is sent in plaintext by default."""
+    with patch(
+        "custom_components.pylontech_mqtt.config_flow.mqtt.Client"
+    ) as mock_client_cls:
+        _mock_client_with_immediate_connack(mock_client_cls)
+        result = _test_mqtt_connection("localhost", 8883, use_tls=True)
+
+    assert result is None
+    mock_client_cls.return_value.tls_set.assert_called_once()
+
+
+def test_tls_disabled_does_not_call_tls_set() -> None:
+    """use_tls=False (the default) must not touch TLS at all."""
+    with patch(
+        "custom_components.pylontech_mqtt.config_flow.mqtt.Client"
+    ) as mock_client_cls:
+        _mock_client_with_immediate_connack(mock_client_cls)
+        result = _test_mqtt_connection("localhost", 1883, use_tls=False)
+
+    assert result is None
+    mock_client_cls.return_value.tls_set.assert_not_called()
 
 
 async def test_empty_hostname_shows_cannot_connect(hass: HomeAssistant) -> None:

@@ -78,7 +78,7 @@ PATCH_CONN = "custom_components.pylontech_mqtt.config_flow._test_mqtt_connection
 PATCH_SETUP = "custom_components.pylontech_mqtt.coordinator.PylontechCoordinator.setup"
 
 
-def make_coordinator(hass, *, topic_prefix: str = "pylontech/stack"):
+def make_coordinator(hass, *, topic_prefix: str = "pylontech/stack", mqtt_tls: bool = False):
     """Build a bare PylontechCoordinator wired to *hass* (MQTT client not started)."""
     from custom_components.pylontech_mqtt.coordinator import PylontechCoordinator
     from custom_components.pylontech_mqtt.entity import stack_id_from_broker
@@ -91,6 +91,7 @@ def make_coordinator(hass, *, topic_prefix: str = "pylontech/stack"):
         mqtt_pass="",
         topic_prefix=topic_prefix,
         stack_id=stack_id_from_broker("localhost", 1883, topic_prefix),
+        mqtt_tls=mqtt_tls,
     )
 
 

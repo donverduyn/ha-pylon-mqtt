@@ -18,6 +18,7 @@ from .const import (
     CONF_MQTT_HOST,
     CONF_MQTT_PASS,
     CONF_MQTT_PORT,
+    CONF_MQTT_TLS,
     CONF_MQTT_TOPIC,
     CONF_MQTT_USER,
     DEFAULT_MQTT_PORT,
@@ -37,12 +38,13 @@ def _reason_code_to_error(reason_code) -> str | None:
 
 
 def _test_mqtt_connection(
-    host: str, port: int, user: str = "", password: str = ""
+    host: str, port: int, user: str = "", password: str = "", use_tls: bool = False
 ) -> str | None:
     """Attempt a real MQTT connection; return None on success or an error key on failure.
 
     Returns ``"invalid_auth"`` when the broker rejects the credentials, or
-    ``"cannot_connect"`` for all other failures (unreachable host, timeout, …).
+    ``"cannot_connect"`` for all other failures (unreachable host, timeout,
+    TLS handshake failure, …).
     """
     outcome: list[str | None] = [None]
 
@@ -53,12 +55,15 @@ def _test_mqtt_connection(
     client = mqtt.Client(CallbackAPIVersion.VERSION2)
     if user:
         client.username_pw_set(user, password)
+    if use_tls:
+        client.tls_set()
     client.on_connect = on_connect
 
     try:
         client.connect(host, port, keepalive=10)
     except (OSError, ValueError):
-        # OSError  — host unreachable, connection refused, etc.
+        # OSError  — host unreachable, connection refused, TLS handshake
+        #            failure (e.g. self-signed/untrusted cert), etc.
         # ValueError — paho raises this for an empty or syntactically invalid
         #              hostname before any network I/O is attempted.
         return "cannot_connect"
@@ -82,6 +87,7 @@ def _broker_schema(
     default_user: str = "",
     default_pass: str = "",
     default_topic: str = DEFAULT_MQTT_TOPIC,
+    default_tls: bool = False,
 ) -> vol.Schema:
     return vol.Schema(
         {
@@ -94,6 +100,7 @@ def _broker_schema(
                 TextSelectorConfig(type=TextSelectorType.PASSWORD)
             ),
             vol.Required(CONF_MQTT_TOPIC, default=default_topic): str,
+            vol.Optional(CONF_MQTT_TLS, default=default_tls): bool,
         }
     )
 
@@ -138,6 +145,7 @@ async def _validate_broker(
                 port,
                 user_input.get(CONF_MQTT_USER, ""),
                 user_input.get(CONF_MQTT_PASS, ""),
+                user_input.get(CONF_MQTT_TLS, False),
             ),
             timeout=10.0,
         )
@@ -243,6 +251,7 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 default_topic=reconfigure_entry.data.get(
                     CONF_MQTT_TOPIC, DEFAULT_MQTT_TOPIC
                 ),
+                default_tls=reconfigure_entry.data.get(CONF_MQTT_TLS, False),
             ),
             errors=errors,
         )

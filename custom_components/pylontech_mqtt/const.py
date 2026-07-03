@@ -8,6 +8,7 @@ CONF_MQTT_PORT = "mqtt_port"
 CONF_MQTT_USER = "mqtt_user"
 CONF_MQTT_PASS = "mqtt_pass"
 CONF_MQTT_TOPIC = "mqtt_topic"
+CONF_MQTT_TLS = "mqtt_tls"
 
 DEFAULT_MQTT_PORT = 1883
 DEFAULT_MQTT_TOPIC = "pylontech/stack"

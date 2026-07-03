@@ -26,8 +26,10 @@ The sidecar and HA are completely decoupled. You can run the sidecar on any mach
 - **Energy Dashboard Ready**: `energy_in` / `energy_out` sensors with `total_increasing` state class, ready for the HA Energy dashboard.
 - **Per-Battery Monitoring**: Voltage, Current, SOC, Temperature, Status, min/max cell values for each module.
 - **Per-Battery Capacity**: Number entity per module lets you tune the kWh capacity for accurate stored-energy calculation.
-- **Stable entity identity**: Entities and devices are keyed off the MQTT topic prefix, not an internal config-entry ID — deleting and re-adding the integration with the same topic prefix keeps your existing entity IDs, history, and dashboard references instead of creating duplicates.
+- **Stable entity identity**: Entities and devices are keyed off the broker host/port/topic, not an internal config-entry ID — deleting and re-adding the integration with the same broker settings keeps your existing entity IDs, history, and dashboard references instead of creating duplicates.
 - **Per-module availability**: A battery module (or cell) that drops out of the stack's reported data shows as unavailable instead of silently freezing on its last known values.
+- **Stale-connection watchdog**: If the sidecar's poll loop hangs while its MQTT connection stays open, entities are marked unavailable after 5 minutes of silence instead of showing stale data forever.
+- **Optional TLS**: Both the sidecar and the HA integration can connect to the broker over TLS.
 - **Diagnostic sensors**: Cycle count, SOH, firmware/board/comm versions, charge/discharge counters, fault event counts.
 - **Diagnostics download**: Supports HA's built-in "Download diagnostics" for the config entry when reporting issues (broker password is redacted).
 - **Automatic reconnection**: The sidecar reconnects to the BMS on failure; the HA coordinator reconnects to MQTT automatically.
@@ -74,6 +76,7 @@ services:
       MQTT_PORT: "1883"
       # MQTT_USER: your_username
       # MQTT_PASS: your_password
+      # MQTT_TLS: "true"        # connect over TLS
       MQTT_TOPIC_PREFIX: pylontech/stack   # must match the HA integration setting
 
       # --- Polling ---
@@ -115,6 +118,7 @@ The sidecar publishes:
 | `MQTT_PORT` | `1883` | MQTT broker port |
 | `MQTT_USER` | — | MQTT username (optional) |
 | `MQTT_PASS` | — | MQTT password (optional) |
+| `MQTT_TLS` | `false` | `true` to connect to the broker over TLS |
 | `MQTT_TOPIC_PREFIX` | `pylontech/stack` | Base topic; `/state` and `/availability` are appended |
 | `POLL_INTERVAL` | `15` | Seconds between BMS polls |
 | `AUTO_SYNC_TIME` | `false` | Sync BMS clock to system time on startup |
@@ -145,6 +149,7 @@ The sidecar publishes:
    - **Broker Port** (default `1883`)
    - **Username** and **Password** (leave blank if not required)
    - **Topic Prefix** — must match `MQTT_TOPIC_PREFIX` from the sidecar (default `pylontech/stack`)
+   - **Use TLS** — enable if the broker requires TLS (matches sidecar's `MQTT_TLS`)
 4. Click **Submit**. HA will verify the broker is reachable before saving.
 
 > [!NOTE]

@@ -20,7 +20,8 @@
           "mqtt_port": "Port del Broker",
           "mqtt_user": "Nom d'usuari (opcional)",
           "mqtt_pass": "Contrasenya (opcional)",
-          "mqtt_topic": "Prefix del Tòpic"
+          "mqtt_topic": "Prefix del Tòpic",
+          "mqtt_tls": "Utilitza TLS"
         }
       },
       "reconfigure": {
@@ -31,7 +32,8 @@
           "mqtt_port": "Port del Broker",
           "mqtt_user": "Nom d'usuari (opcional)",
           "mqtt_pass": "Contrasenya (opcional)",
-          "mqtt_topic": "Prefix del Tòpic"
+          "mqtt_topic": "Prefix del Tòpic",
+          "mqtt_tls": "Utilitza TLS"
         }
       }
     }
