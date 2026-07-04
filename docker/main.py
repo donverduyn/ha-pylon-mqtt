@@ -252,7 +252,7 @@ class BmsConnection:
                 # occurrence here can only be the previous exchange's
                 # straggler. Strip it once and keep reading for *this*
                 # command's own terminator.
-                data = data[len(PROMPT):]
+                data = data[len(PROMPT) :]
                 self._stray_prompt_pending = False
             if PROMPT in data:
                 return data
@@ -461,9 +461,7 @@ class EnergyTracker:
         either direction despite real throughput on each side of the flip.
         """
         if start_power * end_power < 0:
-            crossing_seconds = (
-                elapsed_seconds * start_power / (start_power - end_power)
-            )
+            crossing_seconds = elapsed_seconds * start_power / (start_power - end_power)
             self._integrate_segment(start_power, 0.0, crossing_seconds)
             self._integrate_segment(0.0, end_power, elapsed_seconds - crossing_seconds)
         else:

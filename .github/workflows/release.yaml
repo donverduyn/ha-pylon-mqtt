@@ -25,7 +25,29 @@ jobs:
 
       - name: Derive version from tag
         id: version
-        run: echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+        # Anything with a hyphen (e.g. v2.0.0-rc1) is a pre-release —
+        # real-hardware validation gaps mean nothing ships as a final
+        # release until that's been done (see CONTRIBUTING.md). base_version
+        # strips that suffix for comparison against manifest.json, which only
+        # ever carries the plain release number a prerelease is a candidate for.
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          base_version="${version%%-*}"
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+          echo "base_version=${base_version}" >> "$GITHUB_OUTPUT"
+          if [[ "${version}" == *-* ]]; then
+            echo "is_prerelease=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "is_prerelease=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Verify tag matches manifest version
+        run: |
+          manifest_version="$(jq -r .version custom_components/pylontech_mqtt/manifest.json)"
+          if [ "${{ steps.version.outputs.base_version }}" != "$manifest_version" ]; then
+            echo "::error::Tag ${GITHUB_REF_NAME} (base version ${{ steps.version.outputs.base_version }}) does not match manifest.json version ${manifest_version}"
+            exit 1
+          fi
 
       - uses: "docker/login-action@af1e73f918a031802d376d3c8bbc3fe56130a9b0" # v4.4.0
         with:
@@ -43,12 +65,20 @@ jobs:
             SIDECAR_VERSION=${{ steps.version.outputs.version }}
           tags: |
             ghcr.io/${{ github.repository }}:${{ steps.version.outputs.version }}
-            ghcr.io/${{ github.repository }}:latest
+
+      # Separate, conditional step rather than a second line in the tags list
+      # above: retagging the already-pushed digest is enough, no rebuild
+      # needed, and skipping it outright for prereleases is unambiguous —
+      # tagging ":latest" unconditionally previously let a v2.0.0-rc1 push
+      # overwrite the production "latest" tag with an unvalidated build.
+      - name: Tag latest (non-prerelease only)
+        if: steps.version.outputs.is_prerelease == 'false'
+        run: |
+          docker buildx imagetools create \
+            --tag "ghcr.io/${{ github.repository }}:latest" \
+            "ghcr.io/${{ github.repository }}:${{ steps.version.outputs.version }}"
 
       - uses: "softprops/action-gh-release@718ea10b132b3b2eba29c1007bb80653f286566b" # v3.0.1
         with:
           generate_release_notes: true
-          # Anything with a hyphen (e.g. v2.0.0-rc1) is a pre-release —
-          # real-hardware validation gaps mean nothing ships as a final
-          # release until that's been done (see CONTRIBUTING.md).
-          prerelease: ${{ contains(github.ref_name, '-') }}
+          prerelease: ${{ steps.version.outputs.is_prerelease }}

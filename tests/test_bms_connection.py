@@ -77,7 +77,9 @@ class TestReadUntilPromptTruncation:
     an exception — it must never come back as a silently-accepted partial
     fragment (see BmsConnection._read_until_prompt)."""
 
-    def _connection(self, monkeypatch, read_timeout: float = 0.3) -> "main.BmsConnection":
+    def _connection(
+        self, monkeypatch, read_timeout: float = 0.3
+    ) -> "main.BmsConnection":
         monkeypatch.setattr(main, "CONNECTION_TYPE", "tcp")
         monkeypatch.setattr(main, "_READ_TIMEOUT", read_timeout)
         return main.BmsConnection()
@@ -205,7 +207,9 @@ class TestSendCommandRetryAndFlush:
     next command entirely) never inherits contamination from an abandoned
     response — see BmsConnection.send_command / _flush_stale_input."""
 
-    def _connection(self, monkeypatch, *, read_timeout: float, retries: int) -> "main.BmsConnection":
+    def _connection(
+        self, monkeypatch, *, read_timeout: float, retries: int
+    ) -> "main.BmsConnection":
         monkeypatch.setattr(main, "CONNECTION_TYPE", "tcp")
         monkeypatch.setattr(main, "_READ_TIMEOUT", read_timeout)
         monkeypatch.setattr(main, "_COMMAND_RETRIES", retries)

@@ -70,6 +70,7 @@ class _Config(TypedDict):
     slots: int  # total pwr rows per group  (slots >= batteries)
     groups: int  # number of parallel groups (LV-HUB)
     firmware: str  # "old" (18-col) or "new" (23-col with *.Id)
+    tick_interval: int  # seconds between simulated state ticks
 
 
 class _State(TypedDict):
@@ -100,7 +101,9 @@ class _State(TypedDict):
     life_alarm_times: int
     pwr_coulomb: int
     dsg_cap: int
-    current_override: int | None  # mA; when set the updater skips current; clear with 'stub current auto'
+    current_override: (
+        int | None
+    )  # mA; when set the updater skips current; clear with 'stub current auto'
 
 
 # ---------------------------------------------------------------------------
@@ -142,6 +145,7 @@ _cfg: _Config = {
     "slots": 8,
     "groups": 1,
     "firmware": "new",
+    "tick_interval": 30,
 }
 
 # ---------------------------------------------------------------------------
@@ -189,7 +193,7 @@ _faults: dict[
 # ---------------------------------------------------------------------------
 def _state_updater() -> None:
     while True:
-        time.sleep(30)
+        time.sleep(_cfg["tick_interval"])
         with _state_lock:
             s = _state
             if s["current_override"] is None:
@@ -222,8 +226,8 @@ def _state_updater() -> None:
             s["temp_low"] = s["temperature"] - random.randint(1000, 3000)
             s["temp_high"] = s["temperature"] + random.randint(500, 2000)
             s["mostempr"] = s["temperature"] + random.randint(1000, 3000)
-            # Accumulate lifetime energy counters (30-second tick; mA × 30 s ÷ 1000 → A·s)
-            amp_secs = abs(s["current"]) * 30 // 1000
+            # Accumulate lifetime energy counters (mA × tick_interval s ÷ 1000 → A·s)
+            amp_secs = abs(s["current"]) * _cfg["tick_interval"] // 1000
             if s["current"] > 0:
                 s["pwr_coulomb"] += amp_secs
             else:
@@ -1209,6 +1213,18 @@ def main() -> None:
         metavar="PCT",
         help="Starting SOC %% (default: 85)",
     )
+    ap.add_argument(
+        "--tick-interval",
+        default=30,
+        type=int,
+        metavar="SECONDS",
+        help=(
+            "Seconds between simulated state ticks (SOC/current/temperature "
+            "drift). Tests asserting exact startup values should raise this "
+            "well past the test run's wall-clock length so no tick fires "
+            "mid-run (default: 30)"
+        ),
+    )
     args = ap.parse_args()
 
     if args.batteries < 1 or args.batteries > 16:
@@ -1221,12 +1237,15 @@ def main() -> None:
         )
     if args.groups < 1 or args.groups > 6:
         ap.error("--groups must be 1-6")
+    if args.tick_interval < 1:
+        ap.error("--tick-interval must be >= 1")
 
     _cfg["model"] = args.model
     _cfg["batteries"] = args.batteries
     _cfg["slots"] = args.slots
     _cfg["groups"] = args.groups
     _cfg["firmware"] = args.firmware
+    _cfg["tick_interval"] = args.tick_interval
     _state["soc"] = args.soc
 
     threading.Thread(target=_state_updater, daemon=True).start()

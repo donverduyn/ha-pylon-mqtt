@@ -236,9 +236,7 @@ class TestNumberEntityRegistration:
         entry, _ = await _create_entry(hass)
         ent_reg = er.async_get(hass)
         assert (
-            ent_reg.async_get_entity_id(
-                "number", DOMAIN, f"{_STACK_ID}_bat1_capacity"
-            )
+            ent_reg.async_get_entity_id("number", DOMAIN, f"{_STACK_ID}_bat1_capacity")
             is None
         )
 
@@ -253,9 +251,7 @@ class TestNumberEntityRegistration:
         await hass.async_block_till_done()
 
         assert (
-            ent_reg.async_get_entity_id(
-                "number", DOMAIN, f"{_STACK_ID}_bat1_capacity"
-            )
+            ent_reg.async_get_entity_id("number", DOMAIN, f"{_STACK_ID}_bat1_capacity")
             is not None
         )
 
@@ -290,15 +286,11 @@ class TestNumberEntityRegistration:
         await hass.async_block_till_done()
 
         assert (
-            ent_reg.async_get_entity_id(
-                "number", DOMAIN, f"{_STACK_ID}_bat1_capacity"
-            )
+            ent_reg.async_get_entity_id("number", DOMAIN, f"{_STACK_ID}_bat1_capacity")
             is not None
         )
         assert (
-            ent_reg.async_get_entity_id(
-                "number", DOMAIN, f"{_STACK_ID}_bat2_capacity"
-            )
+            ent_reg.async_get_entity_id("number", DOMAIN, f"{_STACK_ID}_bat2_capacity")
             is not None
         )
 

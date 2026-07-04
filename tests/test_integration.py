@@ -104,9 +104,7 @@ class TestIntegration:
         entry, _ = await _create_entry(hass)
         ent_reg = er.async_get(hass)
         assert (
-            ent_reg.async_get_entity_id(
-                "sensor", DOMAIN, f"{_STACK_ID}_bat1_voltage"
-            )
+            ent_reg.async_get_entity_id("sensor", DOMAIN, f"{_STACK_ID}_bat1_voltage")
             is None
         )
 
@@ -121,9 +119,7 @@ class TestIntegration:
         await hass.async_block_till_done()
 
         assert (
-            ent_reg.async_get_entity_id(
-                "sensor", DOMAIN, f"{_STACK_ID}_bat1_voltage"
-            )
+            ent_reg.async_get_entity_id("sensor", DOMAIN, f"{_STACK_ID}_bat1_voltage")
             is not None
         )
 
@@ -273,9 +269,7 @@ class TestLegacyOptionsDoNotOverrideData:
         coordinator = hass.data[DOMAIN][entry.entry_id]
         assert coordinator._mqtt_pass == "current-password"
 
-    async def test_stale_options_are_purged_on_setup(
-        self, hass: HomeAssistant
-    ) -> None:
+    async def test_stale_options_are_purged_on_setup(self, hass: HomeAssistant) -> None:
         from pytest_homeassistant_custom_component.common import MockConfigEntry
 
         entry = MockConfigEntry(

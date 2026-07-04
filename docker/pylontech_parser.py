@@ -247,9 +247,7 @@ class PylontechParser:
             temperature = int(fields["Temperature"]) / 1000.0
             soc = int(fields["Coulomb"].replace("%", ""))
         except (KeyError, ValueError) as error:
-            _LOGGER.error(
-                "Error parsing 'pwr %d' indexed block: %s", bat_id, error
-            )
+            _LOGGER.error("Error parsing 'pwr %d' indexed block: %s", bat_id, error)
             return None
 
         return PylontechBattery(

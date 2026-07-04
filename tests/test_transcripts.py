@@ -50,9 +50,7 @@ def _replay(transcript_path: Path) -> None:
         if kind == "pwr":
             PylontechParser.parse_pwr_indexed(raw, bat_id)
         else:
-            existing = next(
-                (b for b in system.batteries if b.sys_id == bat_id), None
-            )
+            existing = next((b for b in system.batteries if b.sys_id == bat_id), None)
             battery = existing or PylontechBattery(
                 bat_id, 0.0, 0.0, 0.0, 0, "", 0.0, 0.0
             )

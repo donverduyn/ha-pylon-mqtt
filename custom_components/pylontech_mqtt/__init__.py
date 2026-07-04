@@ -71,7 +71,11 @@ def _migrate_registry_identity(
             changed = False
             for domain, ident in device.identifiers:
                 matched_prefix = next(
-                    (p for p in old_prefixes if domain == DOMAIN and ident.startswith(p)),
+                    (
+                        p
+                        for p in old_prefixes
+                        if domain == DOMAIN and ident.startswith(p)
+                    ),
                     None,
                 )
                 if matched_prefix:
@@ -82,7 +86,9 @@ def _migrate_registry_identity(
                 else:
                     new_identifiers.add((domain, ident))
             if changed:
-                device_reg.async_update_device(device.id, new_identifiers=new_identifiers)
+                device_reg.async_update_device(
+                    device.id, new_identifiers=new_identifiers
+                )
 
         entity_reg = er.async_get(hass)
         for entity in list(
@@ -95,7 +101,9 @@ def _migrate_registry_identity(
             )
             if matched_prefix:
                 new_unique_id = new_prefix + entity.unique_id[len(matched_prefix) :]
-                entity_reg.async_update_entity(entity.entity_id, new_unique_id=new_unique_id)
+                entity_reg.async_update_entity(
+                    entity.entity_id, new_unique_id=new_unique_id
+                )
 
     if prior_stack_id != new_stack_id:
         hass.config_entries.async_update_entry(

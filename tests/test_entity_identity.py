@@ -27,7 +27,7 @@ class TestStackIdFromBroker:
         assert a != b
 
     def test_slash_and_underscore_topics_do_not_collide(self) -> None:
-        """"plant/stack" and "plant_stack" must not munge to the same identity
+        """ "plant/stack" and "plant_stack" must not munge to the same identity
         (a plain "/" -> "_" replace would have collided them)."""
         a = stack_id_from_broker("localhost", 1883, "plant/stack")
         b = stack_id_from_broker("localhost", 1883, "plant_stack")

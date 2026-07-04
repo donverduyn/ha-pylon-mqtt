@@ -53,7 +53,11 @@ def _reason_code_to_error(reason_code: ReasonCode) -> str | None:
     """
     if not reason_code.is_failure:
         return None
-    return "invalid_auth" if reason_code in _AUTH_FAILURE_REASON_NAMES else "cannot_connect"
+    return (
+        "invalid_auth"
+        if reason_code in _AUTH_FAILURE_REASON_NAMES
+        else "cannot_connect"
+    )
 
 
 def _test_mqtt_connection(

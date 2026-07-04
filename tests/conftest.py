@@ -78,7 +78,9 @@ PATCH_CONN = "custom_components.pylontech_mqtt.config_flow._test_mqtt_connection
 PATCH_SETUP = "custom_components.pylontech_mqtt.coordinator.PylontechCoordinator.setup"
 
 
-def make_coordinator(hass, *, topic_prefix: str = "pylontech/stack", mqtt_tls: bool = False):
+def make_coordinator(
+    hass, *, topic_prefix: str = "pylontech/stack", mqtt_tls: bool = False
+):
     """Build a bare PylontechCoordinator wired to *hass* (MQTT client not started)."""
     from custom_components.pylontech_mqtt.coordinator import PylontechCoordinator
     from custom_components.pylontech_mqtt.entity import stack_id_from_broker
@@ -160,6 +162,15 @@ def stub_server():
             STUB_FIRMWARE,
             "--soc",
             str(STUB_SOC_START),
+            # Well past any realistic suite runtime: session-scoped fixtures
+            # like pwr_system capture their values once, lazily, whenever a
+            # test first needs them — with the stub's real default 30s tick,
+            # a slow run (or one where many prior tests delay that first
+            # capture) could have the stub's background updater fire before
+            # the capture happens, flipping soc/current away from the exact
+            # values tests assert. See scripts/pylon_stub.py's _state_updater.
+            "--tick-interval",
+            "3600",
         ],
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,

@@ -409,9 +409,7 @@ class TestSensorMetadata:
     ) -> None:
         """energy_in must use TOTAL_INCREASING so a sidecar-restart reset is
         treated as a new meter cycle rather than corrupting long-term stats."""
-        assert (
-            _sys(coord, "energy_in").state_class == SensorStateClass.TOTAL_INCREASING
-        )
+        assert _sys(coord, "energy_in").state_class == SensorStateClass.TOTAL_INCREASING
 
     def test_system_energy_out_state_class_is_total_increasing(
         self, coord: PylontechCoordinator

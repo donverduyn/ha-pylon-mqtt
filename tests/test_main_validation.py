@@ -28,7 +28,7 @@ def test_invalid_connection_type_exits_before_connecting(monkeypatch, caplog) ->
 
 
 def test_valid_connection_types_pass_this_check(monkeypatch, caplog) -> None:
-    """"tcp" must not be rejected by the new guard itself — the SystemExit(1)
+    """ "tcp" must not be rejected by the new guard itself — the SystemExit(1)
     it still hits next (TCP_HOST is left empty) must come from the
     *existing* TCP_HOST check, not a false-positive CONNECTION_TYPE
     rejection."""

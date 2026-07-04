@@ -385,9 +385,7 @@ def test_reason_code_bad_credentials_returns_invalid_auth(name: str) -> None:
     assert _reason_code_to_error(_reason_code(name)) == "invalid_auth"
 
 
-@pytest.mark.parametrize(
-    "name", ["Unspecified error", "Server unavailable", "Banned"]
-)
+@pytest.mark.parametrize("name", ["Unspecified error", "Server unavailable", "Banned"])
 def test_reason_code_other_failure_returns_cannot_connect(name: str) -> None:
     """Any other failing CONNACK reason code must map to cannot_connect."""
     assert _reason_code_to_error(_reason_code(name)) == "cannot_connect"
