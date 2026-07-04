@@ -7,14 +7,25 @@ tests exercise the pure-logic methods in isolation.
 """
 
 import time
+from datetime import datetime
 from types import SimpleNamespace
+from typing import cast
 from unittest.mock import patch
 
+import paho.mqtt.client as mqtt
 import pytest
 from conftest import make_coordinator
 from homeassistant.core import HomeAssistant
+from paho.mqtt.reasoncodes import ReasonCode
 
 from custom_components.pylontech_mqtt.coordinator import PylontechCoordinator
+
+# _on_message/_on_disconnect/_check_staleness only touch a couple of fields
+# (or none at all, for _check_staleness's `now`) off these paho-mqtt/datetime
+# parameters, so tests use lightweight stand-ins cast to the declared type
+# rather than constructing real paho objects.
+_FAKE_CLIENT = cast(mqtt.Client, None)
+_FAKE_NOW = cast(datetime, None)
 
 # ---------------------------------------------------------------------------
 # Shared test data
@@ -416,10 +427,14 @@ class TestAutoCapacity:
 # ---------------------------------------------------------------------------
 
 
-def _msg(topic: str, payload: str | bytes) -> SimpleNamespace:
+def _msg(topic: str, payload: str | bytes) -> mqtt.MQTTMessage:
     """Build a minimal paho-style message object for _on_message tests."""
-    return SimpleNamespace(
-        topic=topic, payload=payload if isinstance(payload, bytes) else payload.encode()
+    return cast(
+        mqtt.MQTTMessage,
+        SimpleNamespace(
+            topic=topic,
+            payload=payload if isinstance(payload, bytes) else payload.encode(),
+        ),
     )
 
 
@@ -444,7 +459,7 @@ class TestAvailability:
         """Receiving 'offline' on the avail topic must mark the coordinator unavailable."""
         coordinator.last_update_success = True
         coordinator._on_message(
-            None, None, _msg("pylontech/stack/availability", "offline")
+            _FAKE_CLIENT, None, _msg("pylontech/stack/availability", "offline")
         )
         await hass.async_block_till_done()
         assert coordinator.last_update_success is False
@@ -467,7 +482,7 @@ class TestStalenessWatchdog:
         usable data (see coordinator._on_message)."""
         assert coordinator._last_message_monotonic is None
         coordinator._on_message(
-            None, None, _msg("pylontech/stack/availability", "online")
+            _FAKE_CLIENT, None, _msg("pylontech/stack/availability", "online")
         )
         assert coordinator._last_message_monotonic is None
 
@@ -492,7 +507,7 @@ class TestStalenessWatchdog:
         coordinator._last_message_monotonic = (
             time.monotonic() - coordinator._STALE_TIMEOUT_SECONDS - 1
         )
-        coordinator._check_staleness(None)
+        coordinator._check_staleness(_FAKE_NOW)
         assert coordinator.last_update_success is False
 
     async def test_recent_last_message_stays_available(
@@ -500,7 +515,7 @@ class TestStalenessWatchdog:
     ) -> None:
         coordinator.last_update_success = True
         coordinator._last_message_monotonic = time.monotonic() - 5
-        coordinator._check_staleness(None)
+        coordinator._check_staleness(_FAKE_NOW)
         assert coordinator.last_update_success is True
 
     async def test_no_message_ever_received_does_not_crash(
@@ -509,7 +524,7 @@ class TestStalenessWatchdog:
         """Before the first message, _last_message_monotonic is None — the
         watchdog must be a no-op, not raise on the None subtraction."""
         assert coordinator._last_message_monotonic is None
-        coordinator._check_staleness(None)
+        coordinator._check_staleness(_FAKE_NOW)
         assert coordinator.last_update_success is False
 
     async def test_already_unavailable_is_left_alone(
@@ -521,16 +536,19 @@ class TestStalenessWatchdog:
         coordinator._last_message_monotonic = (
             time.monotonic() - coordinator._STALE_TIMEOUT_SECONDS - 1
         )
-        coordinator._check_staleness(None)
+        coordinator._check_staleness(_FAKE_NOW)
         assert coordinator.last_update_success is False
 
     async def test_setup_registers_watchdog_and_shutdown_cancels_it(
         self, hass: HomeAssistant
     ) -> None:
         coord = make_coordinator(hass)
-        with patch("custom_components.pylontech_mqtt.coordinator.mqtt.Client"), patch(
-            "custom_components.pylontech_mqtt.coordinator.async_track_time_interval"
-        ) as mock_track:
+        with (
+            patch("custom_components.pylontech_mqtt.coordinator.mqtt.Client"),
+            patch(
+                "custom_components.pylontech_mqtt.coordinator.async_track_time_interval"
+            ) as mock_track,
+        ):
             mock_unsub = mock_track.return_value
             coord.setup()
             mock_track.assert_called_once()
@@ -549,7 +567,7 @@ class TestStalenessWatchdog:
         assert coordinator.last_update_success is False
 
         coordinator._on_message(
-            None, None, _msg("pylontech/stack/availability", "online")
+            _FAKE_CLIENT, None, _msg("pylontech/stack/availability", "online")
         )
         await hass.async_block_till_done()
         assert coordinator.last_update_success is True
@@ -565,7 +583,7 @@ class TestStalenessWatchdog:
         """
         assert coordinator.data is None
         coordinator._on_message(
-            None, None, _msg("pylontech/stack/availability", "online")
+            _FAKE_CLIENT, None, _msg("pylontech/stack/availability", "online")
         )
         await hass.async_block_till_done()
         # Device should be marked available regardless of whether data has arrived.
@@ -577,7 +595,7 @@ class TestStalenessWatchdog:
         """Any payload other than 'online' must be treated as unavailable."""
         coordinator.last_update_success = True
         coordinator._on_message(
-            None, None, _msg("pylontech/stack/availability", "unknown")
+            _FAKE_CLIENT, None, _msg("pylontech/stack/availability", "unknown")
         )
         await hass.async_block_till_done()
         assert coordinator.last_update_success is False
@@ -594,7 +612,13 @@ class TestStalenessWatchdog:
         coordinator.last_update_success = True
         from types import SimpleNamespace
 
-        coordinator._on_disconnect(None, None, SimpleNamespace(), 0, None)
+        coordinator._on_disconnect(
+            _FAKE_CLIENT,
+            None,
+            cast(mqtt.DisconnectFlags, SimpleNamespace()),
+            cast(ReasonCode, 0),
+            None,
+        )
         await hass.async_block_till_done()
         assert coordinator.last_update_success is False
 
@@ -606,7 +630,7 @@ class TestStalenessWatchdog:
 
         coordinator.last_update_success = False
         coordinator._on_message(
-            None, None, _msg("pylontech/stack/state", json.dumps(_PAYLOAD))
+            _FAKE_CLIENT, None, _msg("pylontech/stack/state", json.dumps(_PAYLOAD))
         )
         await hass.async_block_till_done()
         assert coordinator.data is not None
@@ -625,7 +649,7 @@ class TestOnMessageErrors:
         """A non-UTF-8 payload on the availability topic must be treated as offline."""
         coordinator.last_update_success = True
         coordinator._on_message(
-            None, None, _msg("pylontech/stack/availability", b"\xff\xfe")
+            _FAKE_CLIENT, None, _msg("pylontech/stack/availability", b"\xff\xfe")
         )
         await hass.async_block_till_done()
         assert coordinator.last_update_success is False
@@ -634,7 +658,9 @@ class TestOnMessageErrors:
         self, hass: HomeAssistant, coordinator: PylontechCoordinator
     ) -> None:
         """An invalid JSON payload on the state topic must not raise or update state."""
-        coordinator._on_message(None, None, _msg("pylontech/stack/state", b"not-json{}"))
+        coordinator._on_message(
+            _FAKE_CLIENT, None, _msg("pylontech/stack/state", b"not-json{}")
+        )
         await hass.async_block_till_done()
         assert coordinator.data is None
 
@@ -642,7 +668,9 @@ class TestOnMessageErrors:
         self, hass: HomeAssistant, coordinator: PylontechCoordinator
     ) -> None:
         """A non-UTF-8 payload on the state topic must not raise."""
-        coordinator._on_message(None, None, _msg("pylontech/stack/state", b"\xff\xfe"))
+        coordinator._on_message(
+            _FAKE_CLIENT, None, _msg("pylontech/stack/state", b"\xff\xfe")
+        )
         await hass.async_block_till_done()
         assert coordinator.data is None
 
@@ -653,7 +681,9 @@ class TestOnMessageErrors:
         be logged and dropped without updating coordinator.data."""
 
         for bad_value in ("null", "[]", "123"):
-            coordinator._on_message(None, None, _msg("pylontech/stack/state", bad_value))
+            coordinator._on_message(
+                _FAKE_CLIENT, None, _msg("pylontech/stack/state", bad_value)
+            )
         await hass.async_block_till_done()
         assert coordinator.data is None
 
@@ -759,9 +789,7 @@ class TestPayloadSchemaValidation:
     async def test_battery_soc_out_of_range_is_rejected(
         self, coordinator: PylontechCoordinator
     ) -> None:
-        coordinator._process_payload(
-            {**_PAYLOAD, "batteries": [{**_BAT1, "soc": 101}]}
-        )
+        coordinator._process_payload({**_PAYLOAD, "batteries": [{**_BAT1, "soc": 101}]})
         assert coordinator.data is None
 
     async def test_well_formed_payload_is_accepted(

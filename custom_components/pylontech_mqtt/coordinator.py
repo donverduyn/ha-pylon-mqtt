@@ -4,13 +4,17 @@ import json
 import logging
 import math
 import time
-from datetime import timedelta
+from datetime import datetime, timedelta
+from typing import Any, cast
 
 import paho.mqtt.client as mqtt
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.event import async_track_time_interval
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
+from paho.mqtt.client import ConnectFlags, DisconnectFlags, MQTTMessage
 from paho.mqtt.enums import CallbackAPIVersion
+from paho.mqtt.properties import Properties
+from paho.mqtt.reasoncodes import ReasonCode
 
 from .capacity import parse_spec_capacity
 from .const import DEFAULT_BATTERY_CAPACITY, DOMAIN
@@ -58,7 +62,7 @@ def _validate_number(
     return None
 
 
-def _validate_state_payload(payload: dict) -> str | None:
+def _validate_state_payload(payload: dict[str, Any]) -> str | None:
     """Return a description of the first problem found in *payload*, or None if valid.
 
     A publisher that is partial, incompatible, or simply buggy (e.g. an empty
@@ -85,9 +89,15 @@ def _validate_state_payload(payload: dict) -> str | None:
     batteries = payload.get("batteries")
     if not isinstance(batteries, list):
         return "field 'batteries' must be a list"
+    # isinstance narrowing on an Any-typed value only ever produces the bare
+    # runtime class with Unknown type args, not list[Any]/dict[str, Any] — the
+    # casts below just restore the element type this function already treats
+    # it as everywhere else.
+    batteries = cast(list[Any], batteries)
     for i, bat in enumerate(batteries):
         if not isinstance(bat, dict):
             return f"batteries[{i}] must be an object"
+        bat = cast(dict[str, Any], bat)
         sys_id = bat.get("sys_id")
         if not isinstance(sys_id, int) or isinstance(sys_id, bool):
             return f"batteries[{i}].sys_id must be an int, got {sys_id!r}"
@@ -101,7 +111,7 @@ def _validate_state_payload(payload: dict) -> str | None:
     return None
 
 
-class PylontechCoordinator(DataUpdateCoordinator[dict]):
+class PylontechCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     """Receive Pylontech BMS data pushed via MQTT from the sidecar container."""
 
     # A stuck sidecar poll loop stops publishing entirely (no more "online"
@@ -162,7 +172,11 @@ class PylontechCoordinator(DataUpdateCoordinator[dict]):
         if self._mqtt_user:
             client.username_pw_set(self._mqtt_user, self._mqtt_pass)
         if self._mqtt_tls:
-            client.tls_set()
+            # paho-mqtt imports `ssl` only under `if TYPE_CHECKING:`, and
+            # pyright can't resolve ssl.VerifyMode from there in this
+            # version, making tls_set's own inferred type partially unknown
+            # regardless of the (argument-less) call here.
+            client.tls_set()  # pyright: ignore[reportUnknownMemberType]
         client.reconnect_delay_set(min_delay=5, max_delay=120)
         client.on_connect = self._on_connect
         client.on_message = self._on_message
@@ -208,7 +222,14 @@ class PylontechCoordinator(DataUpdateCoordinator[dict]):
     # MQTT callbacks  (execute in paho's background thread)
     # ------------------------------------------------------------------
 
-    def _on_connect(self, client, userdata, flags, reason_code, properties):
+    def _on_connect(
+        self,
+        client: mqtt.Client,
+        userdata: Any,
+        flags: ConnectFlags,
+        reason_code: ReasonCode,
+        properties: Properties | None,
+    ) -> None:
         if reason_code.is_failure:
             _LOGGER.error("MQTT connect failed: %s", reason_code)
             return
@@ -217,8 +238,13 @@ class PylontechCoordinator(DataUpdateCoordinator[dict]):
         client.subscribe(self._avail_topic)
 
     def _on_disconnect(
-        self, client, userdata, disconnect_flags, reason_code, properties
-    ):
+        self,
+        client: mqtt.Client,
+        userdata: Any,
+        disconnect_flags: DisconnectFlags,
+        reason_code: ReasonCode,
+        properties: Properties | None,
+    ) -> None:
         _LOGGER.warning("MQTT disconnected: %s", reason_code)
         # Mark unavailable immediately so HA entities reflect the loss of comms.
         # paho-mqtt will reconnect automatically; when it does, _on_connect
@@ -226,7 +252,7 @@ class PylontechCoordinator(DataUpdateCoordinator[dict]):
         # payload, which will call _mark_available again if the sidecar is up.
         self.hass.loop.call_soon_threadsafe(self._mark_unavailable)
 
-    def _on_message(self, client, userdata, msg):
+    def _on_message(self, client: mqtt.Client, userdata: Any, msg: MQTTMessage) -> None:
         if msg.topic == self._avail_topic:
             # Deliberately does NOT feed _last_message_monotonic: the sidecar
             # republishes "online" on every poll cycle regardless of whether
@@ -256,7 +282,7 @@ class PylontechCoordinator(DataUpdateCoordinator[dict]):
         # battery_capacities never needs a lock.
         self.hass.loop.call_soon_threadsafe(self._process_payload, payload)
 
-    def _process_payload(self, payload: dict) -> None:
+    def _process_payload(self, payload: object) -> None:
         """Deserialize and update coordinator data. Always called on the HA event loop."""
         if not isinstance(payload, dict):
             _LOGGER.error(
@@ -264,6 +290,9 @@ class PylontechCoordinator(DataUpdateCoordinator[dict]):
                 type(payload).__name__,
             )
             return
+        # Same Any-narrowing gap as in _validate_state_payload: isinstance
+        # only recovers dict[Unknown, Unknown] here, not dict[str, Any].
+        payload = cast(dict[str, Any], payload)
         error = _validate_state_payload(payload)
         if error is not None:
             _LOGGER.error("Rejecting malformed MQTT state payload — %s", error)
@@ -298,13 +327,17 @@ class PylontechCoordinator(DataUpdateCoordinator[dict]):
     # DataUpdateCoordinator override
     # ------------------------------------------------------------------
 
-    async def _async_update_data(self) -> dict:
+    async def _async_update_data(self) -> dict[str, Any]:
         """Re-compute derived values from last received data.
 
         Called when a manual refresh is requested (e.g. after battery
         capacity is changed in the number platform).
         """
-        if self.data is None:
+        # HA's own DataUpdateCoordinator types self.data as _DataT (not
+        # _DataT | None), even though it's None until the first update — see
+        # its `self.data: _DataT = None  # type: ignore[assignment]`. This
+        # check is real at runtime; pyright just can't see it.
+        if self.data is None:  # pyright: ignore[reportUnnecessaryComparison]
             raise UpdateFailed("No MQTT data received yet")
         self._compute_energy_stored(self.data)
         return self.data
@@ -322,7 +355,7 @@ class PylontechCoordinator(DataUpdateCoordinator[dict]):
         self.async_update_listeners()
 
     @callback
-    def _check_staleness(self, now) -> None:
+    def _check_staleness(self, now: datetime) -> None:
         """Mark unavailable if no MQTT message has arrived in a while.
 
         Runs on a timer rather than reacting to an event, because there is
@@ -342,7 +375,7 @@ class PylontechCoordinator(DataUpdateCoordinator[dict]):
             )
             self._mark_unavailable()
 
-    def _deserialize(self, data: dict) -> dict:
+    def _deserialize(self, data: dict[str, Any]) -> dict[str, Any]:
         """Normalise the JSON payload dict, injecting energy_stored defaults."""
         batteries = [
             {**b, "energy_stored": 0.0, "cells": b.get("cells", [])}
@@ -363,7 +396,7 @@ class PylontechCoordinator(DataUpdateCoordinator[dict]):
             "batteries": batteries,
         }
 
-    def _compute_energy_stored(self, system: dict) -> None:
+    def _compute_energy_stored(self, system: dict[str, Any]) -> None:
         """Compute energy_stored per battery and system total from SOC × capacity."""
         total = 0.0
         for bat in system["batteries"]:

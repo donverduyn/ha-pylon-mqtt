@@ -30,6 +30,7 @@ import json
 import re
 import sys
 from pathlib import Path
+from typing import Any
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "docker"))
 
@@ -52,7 +53,7 @@ def _redact(text: str) -> str:
     return _BARCODE_LINE_RE.sub(rf"\1{_REDACTED}", text)
 
 
-def capture(battery_count: int, redact: bool) -> dict:
+def capture(battery_count: int, redact: bool) -> dict[str, Any]:
     bms = main.BmsConnection()
     try:
         commands = ["info", "pwr", "stat", "time"]

@@ -3,16 +3,23 @@
 import asyncio
 import logging
 import time
+from typing import Any
 
 import paho.mqtt.client as mqtt
 import voluptuous as vol
 from homeassistant import config_entries
-from homeassistant.helpers.selector import (
-    TextSelector,
-    TextSelectorConfig,
-    TextSelectorType,
-)
+from homeassistant.config_entries import ConfigFlowResult
+from homeassistant.core import HomeAssistant
+
+# TextSelector's own declared type is partially unknown (a gap in HA core's
+# stubs, not this integration) — only the import triggers it, not any use
+# of the class below.
+from homeassistant.helpers.selector import TextSelector  # pyright: ignore[reportUnknownVariableType]
+from homeassistant.helpers.selector import TextSelectorConfig, TextSelectorType
+from paho.mqtt.client import ConnectFlags
 from paho.mqtt.enums import CallbackAPIVersion
+from paho.mqtt.properties import Properties
+from paho.mqtt.reasoncodes import ReasonCode
 
 from .const import (
     CONF_MQTT_HOST,
@@ -32,7 +39,7 @@ _LOGGER = logging.getLogger(__name__)
 _AUTH_FAILURE_REASON_NAMES = ("Bad user name or password", "Not authorized")
 
 
-def _reason_code_to_error(reason_code) -> str | None:
+def _reason_code_to_error(reason_code: ReasonCode) -> str | None:
     """Map a CONNACK reason code to a config-flow error key, or None on success.
 
     Compared by name rather than numeric value: paho's ReasonCode.value is
@@ -60,7 +67,13 @@ def _test_mqtt_connection(
     """
     outcome: list[str | None] = [None]
 
-    def on_connect(c, userdata, flags, reason_code, properties):
+    def on_connect(
+        c: mqtt.Client,
+        userdata: Any,
+        flags: ConnectFlags,
+        reason_code: ReasonCode,
+        properties: Properties | None,
+    ) -> None:
         outcome[0] = _reason_code_to_error(reason_code) or "ok"
         c.disconnect()
 
@@ -68,7 +81,11 @@ def _test_mqtt_connection(
     if user:
         client.username_pw_set(user, password)
     if use_tls:
-        client.tls_set()
+        # paho-mqtt imports `ssl` only under `if TYPE_CHECKING:`, and pyright
+        # can't resolve ssl.VerifyMode from there in this version, making
+        # tls_set's own inferred type partially unknown regardless of the
+        # (argument-less) call here.
+        client.tls_set()  # pyright: ignore[reportUnknownMemberType]
     client.on_connect = on_connect
 
     try:
@@ -143,7 +160,7 @@ def _invalid_topic_prefix(topic: str) -> bool:
 
 
 async def _validate_broker(
-    hass, host: str, port: int, user_input: dict
+    hass: HomeAssistant, host: str, port: int, user_input: dict[str, Any]
 ) -> str | None:
     """Run _test_mqtt_connection in the executor with a timeout.
 
@@ -170,7 +187,9 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
     VERSION = 1
 
-    async def async_step_user(self, user_input=None):
+    async def async_step_user(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
         """Single-step flow: MQTT broker settings."""
         errors: dict[str, str] = {}
 
@@ -200,7 +219,9 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             errors=errors,
         )
 
-    async def async_step_reconfigure(self, user_input=None):
+    async def async_step_reconfigure(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
         """Let the user update broker settings for an existing entry.
 
         Updates entry.data in place (via async_update_reload_and_abort)

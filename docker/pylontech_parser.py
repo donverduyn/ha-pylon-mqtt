@@ -18,7 +18,7 @@ class PylontechParser:
         if current_system is None:
             current_system = PylontechSystem(0, 0, 0, 0, 0, 0, 0)
 
-        batteries = []
+        batteries: list[PylontechBattery] = []
         lines = raw_text.splitlines()
 
         # Detect column positions from the header line so the parser is robust
@@ -105,13 +105,13 @@ class PylontechParser:
                 break
 
         # Helpers for parsing extended columns — defined once, used per row.
-        def _milli(p: list, idx: int) -> float | None:
+        def _milli(p: list[str], idx: int) -> float | None:
             """Return a milli-unit column as its base unit, or None if absent or '-'."""
             if len(p) <= idx or p[idx] == "-":
                 return None
             return int(p[idx]) / 1000.0
 
-        def _st(p: list, idx: int) -> str | None:
+        def _st(p: list[str], idx: int) -> str | None:
             """Return status string column, or None if absent / placeholder '-'."""
             if len(p) <= idx:
                 return None

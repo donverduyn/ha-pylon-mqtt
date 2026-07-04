@@ -44,7 +44,7 @@ class PylontechBattery:
     power_events: int | None = None  # Power Events bitmask
     sys_fault: int | None = None  # System Fault bitmask
 
-    cells: list[PylontechCell] = field(default_factory=list)
+    cells: list[PylontechCell] = field(default_factory=list[PylontechCell])
 
 
 @dataclass
@@ -95,7 +95,7 @@ class PylontechSystem:
     pwr_coulomb: int | None = None  # total mAh throughput
     dsg_cap: int | None = None  # discharge capacity (mAh)
 
-    batteries: list[PylontechBattery] = field(default_factory=list)
+    batteries: list[PylontechBattery] = field(default_factory=list[PylontechBattery])
 
     @property
     def battery_count(self) -> int:

@@ -52,62 +52,112 @@ import random
 import socketserver
 import threading
 import time
+from typing import TypedDict
+
+
+class _ModelSpec(TypedDict):
+    device_name: str
+    spec: str
+    cells: int
+    cap_mah: int
+    max_chg: int
+    max_dsg: int
+
+
+class _Config(TypedDict):
+    model: str
+    batteries: int  # present modules per group
+    slots: int  # total pwr rows per group  (slots >= batteries)
+    groups: int  # number of parallel groups (LV-HUB)
+    firmware: str  # "old" (18-col) or "new" (23-col with *.Id)
+
+
+class _State(TypedDict):
+    soc: int
+    charging: bool
+    voltage: int  # mV  (stack voltage)
+    current: int  # mA  (positive = charging)
+    temperature: int  # mC  (pack temperature)
+    temp_low: int  # mC  min cell temperature
+    temp_high: int  # mC  max cell temperature
+    volt_low: int  # mV  min cell voltage
+    volt_high: int  # mV  max cell voltage
+    mostempr: int  # mC  MOSFET temperature
+    cycles: int
+    charge_times: int
+    discharge_cnt: int
+    idle_times: int
+    shut_times: int
+    reset_times: int
+    sc_times: int
+    bat_ov_times: int
+    bat_hv_times: int
+    bat_lv_times: int
+    bat_uv_times: int
+    pwr_ov_times: int
+    pwr_hv_times: int
+    life_warn_times: int
+    life_alarm_times: int
+    pwr_coulomb: int
+    dsg_cap: int
+    current_override: int | None  # mA; when set the updater skips current; clear with 'stub current auto'
+
 
 # ---------------------------------------------------------------------------
 # Model catalogue
 # ---------------------------------------------------------------------------
-MODELS: dict[str, dict] = {
-    "US2000": dict(
-        device_name="US2KBPL",
-        spec="48V/50AH",
-        cells=15,
-        cap_mah=50000,
-        max_chg=102000,
-        max_dsg=-100000,
-    ),
-    "US3000": dict(
-        device_name="US3KBPL",
-        spec="48V/74AH",
-        cells=15,
-        cap_mah=74000,
-        max_chg=150000,
-        max_dsg=-150000,
-    ),
-    "US5000": dict(
-        device_name="US5KBPL",
-        spec="48V/100AH",
-        cells=15,
-        cap_mah=100000,
-        max_chg=200000,
-        max_dsg=-200000,
-    ),
+MODELS: dict[str, _ModelSpec] = {
+    "US2000": {
+        "device_name": "US2KBPL",
+        "spec": "48V/50AH",
+        "cells": 15,
+        "cap_mah": 50000,
+        "max_chg": 102000,
+        "max_dsg": -100000,
+    },
+    "US3000": {
+        "device_name": "US3KBPL",
+        "spec": "48V/74AH",
+        "cells": 15,
+        "cap_mah": 74000,
+        "max_chg": 150000,
+        "max_dsg": -150000,
+    },
+    "US5000": {
+        "device_name": "US5KBPL",
+        "spec": "48V/100AH",
+        "cells": 15,
+        "cap_mah": 100000,
+        "max_chg": 200000,
+        "max_dsg": -200000,
+    },
 }
 
 # ---------------------------------------------------------------------------
 # Runtime configuration  (filled by main() before server starts)
 # ---------------------------------------------------------------------------
-_cfg: dict = {
+_cfg: _Config = {
     "model": "US2000",
-    "batteries": 2,  # present modules per group
-    "slots": 8,  # total pwr rows per group  (slots >= batteries)
-    "groups": 1,  # number of parallel groups (LV-HUB)
-    "firmware": "new",  # "old" (18-col) or "new" (23-col with *.Id)
+    "batteries": 2,
+    "slots": 8,
+    "groups": 1,
+    "firmware": "new",
 }
 
 # ---------------------------------------------------------------------------
 # Shared BMS state
 # ---------------------------------------------------------------------------
-_state: dict = {
+_state: _State = {
     "soc": 85,
     "charging": True,
-    "voltage": 50691,  # mV  (stack voltage)
-    "current": 3806,  # mA  (positive = charging)
-    "temperature": 17000,  # mC  (pack temperature)
-    "temp_low": 15000,  # mC  min cell temperature
-    "temp_high": 19000,  # mC  max cell temperature
-    "volt_low": 3378,  # mV  min cell voltage
-    "volt_high": 3381,  # mV  max cell voltage
-    "mostempr": 22700,  # mC  MOSFET temperature
+    "voltage": 50691,
+    "current": 3806,
+    "temperature": 17000,
+    "temp_low": 15000,
+    "temp_high": 19000,
+    "volt_low": 3378,
+    "volt_high": 3381,
+    "mostempr": 22700,
     "cycles": 430,
     "charge_times": 1150,
     "discharge_cnt": 0,
@@ -125,7 +175,7 @@ _state: dict = {
     "life_alarm_times": 0,
     "pwr_coulomb": 153311400,
     "dsg_cap": 21506462,
-    "current_override": None,  # mA; when set the updater skips current; clear with 'stub current auto'
+    "current_override": None,
 }
 _state_lock = threading.Lock()
 _admin_mode = False  # toggled by login/logout
@@ -221,7 +271,7 @@ def _unknown(cmd: str) -> bytes:
 def _resp_pwr_indexed(cmd: str, bat_id: int) -> bytes:
     """Return the vertical key:value block for battery `bat_id`."""
     with _state_lock:
-        s = dict(_state)
+        s = _state.copy()
 
     n_groups = _cfg["groups"]
     slots_per_group = _cfg["slots"]
@@ -347,7 +397,7 @@ def _base_state(current_ma: int) -> str:
 
 def _resp_pwr(cmd: str) -> bytes:
     with _state_lock:
-        s = dict(_state)
+        s = _state.copy()
 
     batt_per_group = _cfg["batteries"]
     slots_per_group = _cfg["slots"]
@@ -510,7 +560,7 @@ def _resp_info(cmd: str) -> bytes:
 # ---------------------------------------------------------------------------
 def _resp_stat(cmd: str) -> bytes:
     with _state_lock:
-        s = dict(_state)
+        s = _state.copy()
     base_soh = max(0, 100 - int(s["cycles"] * 0.02))
     body = (
         f"Device address           1\r\r\n"
@@ -586,7 +636,7 @@ def _resp_time(cmd: str) -> bytes:
 # ---------------------------------------------------------------------------
 def _resp_bat(cmd: str) -> bytes:
     with _state_lock:
-        s = dict(_state)
+        s = _state.copy()
     m = MODELS[_cfg["model"]]
     cells = m["cells"]
     cap = m["cap_mah"] // cells
@@ -816,7 +866,7 @@ def _resp_prot(cmd: str) -> bytes:
 # ---------------------------------------------------------------------------
 def _resp_pwrsys(cmd: str) -> bytes:
     with _state_lock:
-        s = dict(_state)
+        s = _state.copy()
     n_groups = _cfg["groups"]
     batt_per_group = _cfg["batteries"]
     slots_per_group = _cfg["slots"]

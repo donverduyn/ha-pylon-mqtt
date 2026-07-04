@@ -40,7 +40,7 @@ class PylontechSystemEntity(CoordinatorEntity[PylontechCoordinator]):
 
     _attr_has_entity_name = True
 
-    def __init__(self, coordinator, stack_id: str):
+    def __init__(self, coordinator: PylontechCoordinator, stack_id: str):
         super().__init__(coordinator)
         self._stack_id = stack_id
 
@@ -64,7 +64,7 @@ class PylontechBatteryEntity(CoordinatorEntity[PylontechCoordinator]):
 
     _attr_has_entity_name = True
 
-    def __init__(self, coordinator, stack_id: str, bat_id: int):
+    def __init__(self, coordinator: PylontechCoordinator, stack_id: str, bat_id: int):
         super().__init__(coordinator)
         self._stack_id = stack_id
         self._bat_id = bat_id
@@ -97,7 +97,9 @@ class PylontechBatteryEntity(CoordinatorEntity[PylontechCoordinator]):
 class PylontechCellEntity(PylontechBatteryEntity):
     """Base class for per-cell entities, attached to the parent battery module device."""
 
-    def __init__(self, coordinator, stack_id: str, bat_id: int, cell_id: int):
+    def __init__(
+        self, coordinator: PylontechCoordinator, stack_id: str, bat_id: int, cell_id: int
+    ):
         super().__init__(coordinator, stack_id, bat_id)
         self._cell_id = cell_id
 

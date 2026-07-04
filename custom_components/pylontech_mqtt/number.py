@@ -17,14 +17,14 @@ async def async_setup_entry(
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     """Set up the number platform."""
-    coordinator = hass.data[DOMAIN][entry.entry_id]
+    coordinator: PylontechCoordinator = hass.data[DOMAIN][entry.entry_id]
 
     seen_bat_ids: set[int] = set()
 
     def _add_new_batteries() -> None:
         if not coordinator.data:
             return
-        new_entities = []
+        new_entities: list[PylontechBatteryCapacityNumber] = []
         for bat in coordinator.data.get("batteries", []):
             bat_id = bat.get("sys_id")
             if bat_id is None:
@@ -86,7 +86,10 @@ class PylontechBatteryCapacityNumber(PylontechBatteryEntity, RestoreNumber):
         # Re-compute energy_stored with the restored capacity immediately so
         # the sensor reflects the correct value without waiting for the next
         # MQTT push (typically 15 s).
-        if self.coordinator.data is not None:
+        # See coordinator.py's _async_update_data: HA's own DataUpdateCoordinator
+        # types .data as _DataT (never None) even though it starts out None,
+        # so this real runtime check reads as always-true to pyright.
+        if self.coordinator.data is not None:  # pyright: ignore[reportUnnecessaryComparison]
             await self.coordinator.async_request_refresh()
 
     async def async_set_native_value(self, value: float) -> None:

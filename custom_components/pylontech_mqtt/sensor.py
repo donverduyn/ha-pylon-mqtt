@@ -20,6 +20,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .const import DOMAIN
+from .coordinator import PylontechCoordinator
 from .entity import PylontechBatteryEntity, PylontechCellEntity, PylontechSystemEntity
 
 # ---------------------------------------------------------------------------
@@ -459,7 +460,7 @@ async def async_setup_entry(
     def _add_new_entities() -> None:
         if not coordinator.data:
             return
-        new_entities: list = []
+        new_entities: list[SensorEntity] = []
         for bat in coordinator.data.get("batteries", []):
             bat_id = bat.get("sys_id")
             if bat_id is None:
@@ -508,7 +509,7 @@ class PylontechSystemSensor(PylontechSystemEntity, SensorEntity):
 
     def __init__(
         self,
-        coordinator,
+        coordinator: PylontechCoordinator,
         stack_id: str,
         description: SensorEntityDescription,
     ) -> None:
@@ -530,7 +531,7 @@ class PylontechBatterySensor(PylontechBatteryEntity, SensorEntity):
 
     def __init__(
         self,
-        coordinator,
+        coordinator: PylontechCoordinator,
         stack_id: str,
         bat_id: int,
         description: SensorEntityDescription,
@@ -556,7 +557,7 @@ class PylontechCellSensor(PylontechCellEntity, SensorEntity):
 
     def __init__(
         self,
-        coordinator,
+        coordinator: PylontechCoordinator,
         stack_id: str,
         bat_id: int,
         cell_id: int,

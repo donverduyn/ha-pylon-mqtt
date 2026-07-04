@@ -13,6 +13,7 @@ markers = [
 [tool.pyright]
 include = ["custom_components", "docker", "scripts", "tests"]
 exclude = ["**/__pycache__", "**/.pytest_cache"]
+typeCheckingMode = "strict"
 # Mirrors [tool.pytest.ini_options].pythonpath above: "docker" exposes
 # pylontech_parser/structs/main, "." makes custom_components importable,
 # matching how the test suite itself resolves these bare imports.
@@ -32,3 +33,25 @@ pythonVersion = "3.13"
 # so this specific rule is disabled rather than working around it 11+ times
 # with per-line ignores across entity.py/number.py/sensor.py.
 reportIncompatibleVariableOverride = false
+
+# Production code (custom_components/docker/scripts) is held to strict typing
+# above; tests lean on untyped mocks/fixtures and intentionally reach into
+# private members (coordinator._process_payload etc.), so strict there is
+# mostly noise rather than real bug-catching. pyright's executionEnvironments
+# can't override typeCheckingMode itself (only individual rules), so this
+# lists exactly the rules "standard" mode disables relative to "strict" —
+# confirmed by diffing a standard-mode run against this strict config.
+[[tool.pyright.executionEnvironments]]
+root = "tests"
+reportUnknownMemberType = "none"
+reportUnknownArgumentType = "none"
+reportUnknownParameterType = "none"
+reportMissingParameterType = "none"
+reportUnknownVariableType = "none"
+reportPrivateUsage = "none"
+reportMissingTypeArgument = "none"
+reportUnusedVariable = "none"
+reportMissingTypeStubs = "none"
+reportUnusedFunction = "none"
+reportUnnecessaryComparison = "none"
+reportUnnecessaryIsInstance = "none"

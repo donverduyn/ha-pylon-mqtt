@@ -42,13 +42,17 @@ import sys
 import time
 from dataclasses import asdict
 from datetime import datetime
-from typing import Optional, Protocol
+from types import FrameType
+from typing import Any, Optional, Protocol
 
 import paho.mqtt.client as mqtt
 import serial
+from paho.mqtt.client import ConnectFlags, DisconnectFlags
 from paho.mqtt.enums import CallbackAPIVersion, MQTTErrorCode
+from paho.mqtt.properties import Properties
+from paho.mqtt.reasoncodes import ReasonCode
 from pylontech_parser import PylontechParser
-from structs import PylontechSystem
+from structs import PylontechBattery, PylontechSystem
 
 # ---------------------------------------------------------------------------
 # Logging
@@ -516,7 +520,7 @@ def _fetch_batteries_indexed(bms: _CommandSender, system: PylontechSystem) -> No
     at MAX_BATTERIES, whichever comes first; absent slots in between are
     skipped rather than treated as the end of the stack.
     """
-    batteries = []
+    batteries: list[PylontechBattery] = []
     for bat_id in range(1, MAX_BATTERIES + 1):
         raw = bms.send_command(f"pwr {bat_id}")
         if "not found" in raw:
@@ -571,7 +575,11 @@ def _build_mqtt_client() -> mqtt.Client:
     if MQTT_USER:
         client.username_pw_set(MQTT_USER, MQTT_PASS)
     if MQTT_TLS:
-        client.tls_set()
+        # paho-mqtt imports `ssl` only under `if TYPE_CHECKING:`, and pyright
+        # can't resolve ssl.VerifyMode from there in this version, making
+        # tls_set's own inferred type partially unknown regardless of the
+        # (argument-less) call here.
+        client.tls_set()  # pyright: ignore[reportUnknownMemberType]
     client.will_set(AVAIL_TOPIC, "offline", retain=True)
     return client
 
@@ -669,7 +677,7 @@ def main() -> None:
 
     # Treat SIGTERM (sent by `docker stop`) the same as KeyboardInterrupt so the
     # clean-shutdown path publishes "offline" before exiting.
-    def _handle_sigterm(signum, frame):  # noqa: ANN001
+    def _handle_sigterm(signum: int, frame: FrameType | None) -> None:
         raise KeyboardInterrupt
 
     signal.signal(signal.SIGTERM, _handle_sigterm)
@@ -686,13 +694,25 @@ def main() -> None:
     # -- MQTT setup --
     client = _build_mqtt_client()
 
-    def on_connect(c, userdata, flags, reason_code, properties):  # noqa: ANN001
+    def on_connect(
+        c: mqtt.Client,
+        userdata: Any,
+        flags: ConnectFlags,
+        reason_code: ReasonCode,
+        properties: Properties | None,
+    ) -> None:
         if reason_code.is_failure:
             _LOGGER.error("MQTT connect failed: %s", reason_code)
         else:
             _LOGGER.info("MQTT connected")
 
-    def on_disconnect(c, userdata, disconnect_flags, reason_code, properties):  # noqa: ANN001
+    def on_disconnect(
+        c: mqtt.Client,
+        userdata: Any,
+        disconnect_flags: DisconnectFlags,
+        reason_code: ReasonCode,
+        properties: Properties | None,
+    ) -> None:
         _LOGGER.warning("MQTT disconnected: %s", reason_code)
 
     client.on_connect = on_connect

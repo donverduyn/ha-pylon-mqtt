@@ -1,10 +1,5 @@
 {
   "python.defaultInterpreterPath": "/home/vscode/.venv/bin/python",
-  "python.analysis.typeCheckingMode": "basic",
-  "python.analysis.extraPaths": [
-    "${workspaceFolder}/custom_components",
-    "${workspaceFolder}/docker"
-  ],
   "editor.formatOnSave": true,
   "[python]": {
     "editor.defaultFormatter": "charliermarsh.ruff",
@@ -24,6 +19,8 @@
     "**/.venv": true,
     "**/.ruff_cache": true,
     "**/.pytest_cache": true,
-    "**/__pycache__": true
+    "**/__pycache__": true,
+    "**/.mypy_cache": true,
+    "**/.coverage": true
   }
 }
