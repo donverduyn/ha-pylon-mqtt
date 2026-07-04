@@ -1,6 +1,8 @@
-# Pinned to a specific patch release for reproducible builds. Bump
-# deliberately; check https://hub.docker.com/_/python/tags for updates.
-FROM python:3.11.15-slim
+# Pinned to a specific patch release, by digest, for reproducible builds.
+# Bump deliberately; check https://hub.docker.com/_/python/tags for updates,
+# then re-resolve the digest (e.g. `docker buildx imagetools inspect
+# python:3.11.15-slim` or via the registry API) — do not just edit the tag.
+FROM python:3.11.15-slim@sha256:b27df5841f3355e9473f9a516d38a6783b6c8dfeacaf2d14a240f443b368ddb6
 
 WORKDIR /app
 

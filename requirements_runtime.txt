@@ -1,0 +1,11 @@
+# The actual runtime footprint shipped to users — used to scope vulnerability
+# scanning to what matters, since requirements_dev.lock.txt also drags in the
+# test-only pytest-homeassistant-custom-component dependency tree (a frozen,
+# old homeassistant pin that never ships and would otherwise make pip-audit
+# permanently red for CVEs no user is ever exposed to).
+
+# Mirrors custom_components/pylontech_mqtt/manifest.json "requirements"
+paho-mqtt>=2.0.0
+
+# Mirrors docker/Dockerfile's pinned sidecar dependency
+pyserial>=3.5

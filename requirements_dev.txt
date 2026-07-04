@@ -1,4 +1,6 @@
-# Runtime requirements (mirrors manifest.json)
+# Runtime requirement of the Docker sidecar (docker/main.py), needed here so
+# tests can import it — see requirements_runtime.txt for the full picture,
+# including the HA integration's own manifest.json requirement (paho-mqtt).
 pyserial>=3.5
 
 # Testing — bundles homeassistant core, pytest, pytest-asyncio, and all HA test fixtures
@@ -6,3 +8,6 @@ pytest-homeassistant-custom-component
 
 # Code quality
 ruff
+
+# Vulnerability scanning
+pip-audit

@@ -16,8 +16,10 @@ jobs:
         with:
           python-version: "3.13"
       - name: Install dependencies
-        run: pip install -r requirements_dev.txt
+        run: pip install --require-hashes -r requirements_dev.lock.txt
       - name: Run test suite
         run: pytest
       - name: Ruff
         run: ruff check .
+      - name: pip-audit (runtime dependencies)
+        run: pip-audit -r requirements_runtime.txt
