@@ -46,4 +46,5 @@ EOF
 # remoteEnv or /etc/profile.d: PATH resolves "./node_modules/.bin" relative to cwd on every
 # lookup, so putting it in a shell rc keeps the risk scoped to interactive terminals the
 # user opens, not every process VS Code spawns in every directory.
+# shellcheck disable=SC2016 # $PATH must stay literal here — it's expanded later when .bashrc is sourced, not now
 grep -qF 'node_modules/.bin' /home/vscode/.bashrc || echo 'export PATH="./node_modules/.bin:$PATH"' >> /home/vscode/.bashrc
