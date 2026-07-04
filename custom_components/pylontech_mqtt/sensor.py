@@ -1,5 +1,7 @@
 """Sensor platform for Pylontech MQTT."""
 
+from typing import cast
+
 from homeassistant.components.sensor import (
     SensorDeviceClass,
     SensorEntity,
@@ -18,6 +20,7 @@ from homeassistant.const import (
 )
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.helpers.typing import StateType
 
 from .const import DOMAIN
 from .coordinator import PylontechCoordinator
@@ -518,7 +521,7 @@ class PylontechSystemSensor(PylontechSystemEntity, SensorEntity):
         self._attr_unique_id = f"{self._stack_id}_{description.key}"
 
     @property
-    def native_value(self):
+    def native_value(self) -> StateType:
         if not self.coordinator.data:
             return None
         return self.coordinator.data.get(self.entity_description.key)
@@ -541,12 +544,12 @@ class PylontechBatterySensor(PylontechBatteryEntity, SensorEntity):
         self._attr_unique_id = f"{self._stack_id}_bat{bat_id}_{description.key}"
 
     @property
-    def native_value(self):
+    def native_value(self) -> StateType:
         if not self.coordinator.data:
             return None
         for bat in self.coordinator.data.get("batteries", []):
             if bat.get("sys_id") == self._bat_id:
-                return bat.get(self.entity_description.key)
+                return cast(StateType, bat.get(self.entity_description.key))
         return None
 
 
@@ -571,12 +574,12 @@ class PylontechCellSensor(PylontechCellEntity, SensorEntity):
         self._attr_name = f"Cell {cell_id} {description.name}"
 
     @property
-    def native_value(self):
+    def native_value(self) -> StateType:
         if not self.coordinator.data:
             return None
         for bat in self.coordinator.data.get("batteries", []):
             if bat.get("sys_id") == self._bat_id:
                 for cell in bat.get("cells", []):
                     if cell.get("cell_id") == self._cell_id:
-                        return cell.get(self.entity_description.key)
+                        return cast(StateType, cell.get(self.entity_description.key))
         return None

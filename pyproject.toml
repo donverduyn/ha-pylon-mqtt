@@ -14,6 +14,34 @@ markers = [
     "e2e: spawns real subprocesses (sidecar, Mosquitto, BMS stub) and/or exercises real timeout/retry/grace-window timing — excluded from the default run, see addopts",
 ]
 
+[tool.mypy]
+# Scoped to production code only (not tests): this is what Home Assistant's
+# strict-typing quality-scale rule actually gates on, and it's the CI source
+# of truth for that rule (pyright/Pylance stays for editor feedback,
+# including over tests — see [tool.pyright] below). Tests are deliberately
+# out of scope rather than given a relaxed override: mypy's per-module
+# overrides only match fully-qualified, dot-separated module names (a
+# "test_*" prefix glob is rejected as invalid), and every test file here is a
+# flat top-level module (test_foo, not tests.test_foo) because tests/ is on
+# pytest's pythonpath directly — so there's no pattern that matches "test
+# modules" as a group without hardcoding and maintaining every filename.
+mypy_path = "docker"
+files = ["custom_components", "docker", "scripts"]
+# `exclude` (not just `files`) needs to skip tests/: `files` is only consulted
+# for a bare `mypy` with no path arguments — `mypy .` (or any explicit path)
+# overrides `files` entirely but still walks directories through `exclude`,
+# so without this, an explicit invocation re-scans tests/ and reintroduces
+# every problem `files` was scoped to avoid above.
+exclude = "^(\\.venv|tests|.*/__pycache__)/"
+python_version = "3.13"
+strict = true
+warn_unused_configs = true
+# custom_components/ has no __init__.py (standard for HA integrations), so
+# mypy can't infer its package root from file structure alone; without this
+# it also double-counts coordinator.py as both "pylontech_mqtt.coordinator"
+# and "custom_components.pylontech_mqtt.coordinator".
+explicit_package_bases = true
+
 [tool.pyright]
 include = ["custom_components", "docker", "scripts", "tests"]
 exclude = ["**/__pycache__", "**/.pytest_cache"]

@@ -8,7 +8,7 @@ from datetime import datetime, timedelta
 from typing import Any, cast
 
 import paho.mqtt.client as mqtt
-from homeassistant.core import HomeAssistant, callback
+from homeassistant.core import CALLBACK_TYPE, HomeAssistant, callback
 from homeassistant.helpers.event import async_track_time_interval
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 from paho.mqtt.client import ConnectFlags, DisconnectFlags, MQTTMessage
@@ -89,11 +89,12 @@ def _validate_state_payload(payload: dict[str, Any]) -> str | None:
     batteries = payload.get("batteries")
     if not isinstance(batteries, list):
         return "field 'batteries' must be a list"
-    # isinstance narrowing on an Any-typed value only ever produces the bare
-    # runtime class with Unknown type args, not list[Any]/dict[str, Any] — the
-    # casts below just restore the element type this function already treats
-    # it as everywhere else.
-    batteries = cast(list[Any], batteries)
+    # isinstance narrowing on an Any-typed value produces list[Unknown] under
+    # pyright (it still doesn't know the element type) but list[Any] under
+    # mypy (which considers a second cast to that same type redundant) — cast
+    # to the more specific element type both checkers agree is unresolved,
+    # satisfying pyright without mypy flagging it as a no-op.
+    batteries = cast(list[object], batteries)
     for i, bat in enumerate(batteries):
         if not isinstance(bat, dict):
             return f"batteries[{i}] must be an object"
@@ -149,7 +150,7 @@ class PylontechCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._avail_topic = f"{topic_prefix}/availability"
         self._client: mqtt.Client | None = None
         self._last_message_monotonic: float | None = None
-        self._unsub_watchdog = None
+        self._unsub_watchdog: CALLBACK_TYPE | None = None
 
         self.default_capacity = default_capacity
         self.battery_capacities: dict[int, float] = {}

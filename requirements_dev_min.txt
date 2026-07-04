@@ -26,6 +26,10 @@ pytest-homeassistant-custom-component==0.13.232
 # Code quality
 ruff
 pyright
+mypy
+# Stubs for pyserial, imported by docker/main.py; mypy's strict mode requires
+# an explicit stub package rather than falling back to untyped/Any.
+types-pyserial
 
 # Vulnerability scanning
 pip-audit
