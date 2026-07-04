@@ -25,12 +25,6 @@
   "containerEnv": {
     "VIRTUAL_ENV": "/home/vscode/.venv"
   },
-  // Bind-mount the host's ~/.claude so Claude Code's config, credentials, and
-  // persistent memory (/home/vscode/.claude/projects/*/memory) survive
-  // container rebuilds instead of living only in the disposable container fs.
-  "mounts": [
-    "source=${localEnv:HOME}${localEnv:USERPROFILE}/.claude,target=/home/vscode/.claude,type=bind"
-  ],
   // Put the venv's bin dir on PATH for every shell (equivalent to `source .venv/bin/activate`
   // but applies to non-interactive shells and VS Code's integrated terminal too). This must be
   // remoteEnv, not containerEnv: containerEnv is baked into the initial `docker run`, before a
@@ -49,7 +43,18 @@
       "extensions": [
         "ms-python.python",
         "ms-python.pylance",
-        "charliermarsh.ruff"
+        "charliermarsh.ruff",
+        // Matches [tool.mypy] in pyproject.toml, the strict-typing gate CI
+        // enforces on custom_components/docker/scripts.
+        "ms-python.mypy-type-checker",
+        "tamasfe.even-better-toml",
+        "redhat.vscode-yaml",
+        // Workflow schema validation/autocomplete for .github/workflows/*.yaml.
+        "github.vscode-github-actions",
+        "ms-azuretools.vscode-docker",
+        // Matches the hadolint-docker and shellcheck pre-commit hooks.
+        "exiasr.hadolint",
+        "timonwong.shellcheck"
       ],
       "settings": {
         "python.defaultInterpreterPath": "/home/vscode/.venv/bin/python",

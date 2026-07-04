@@ -21,6 +21,6 @@
     "**/.pytest_cache": true,
     "**/__pycache__": true,
     "**/.mypy_cache": true,
-    "**/.coverage": true
+    "**/.coverage*": true
   }
 }
