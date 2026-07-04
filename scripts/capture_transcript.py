@@ -107,7 +107,8 @@ def main_cli() -> None:
 
     print(f"Wrote {out_path}", file=sys.stderr)
     print(
-        "Review it by hand before opening a PR — redaction is best-effort, not a guarantee.",
+        "Review it by hand before opening a PR — redaction is best-effort, "
+        "not a guarantee.",
         file=sys.stderr,
     )
 

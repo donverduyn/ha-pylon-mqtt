@@ -57,7 +57,7 @@ def _wait_for_port(host: str, port: int, timeout: float = 15.0) -> None:
 
 
 @pytest.fixture
-def mosquitto_broker(tmp_path: Path) -> Generator[int, None, None]:
+def mosquitto_broker(tmp_path: Path) -> Generator[int]:
     """A real, unauthenticated local Mosquitto broker for the sidecar to publish to."""
     conf = tmp_path / "mosquitto.conf"
     conf.write_text(f"listener {_BROKER_PORT} {_HOST}\nallow_anonymous true\n")

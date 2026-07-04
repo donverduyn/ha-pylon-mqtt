@@ -43,7 +43,7 @@ import time
 from dataclasses import asdict
 from datetime import datetime
 from types import FrameType
-from typing import Any, Optional, Protocol
+from typing import Any, Protocol
 
 import paho.mqtt.client as mqtt
 import serial
@@ -233,7 +233,7 @@ class BmsConnection:
                 self._tcp.settimeout(_POLL_INTERVAL)
                 try:
                     chunk = self._tcp.recv(4096)
-                except socket.timeout:
+                except TimeoutError:
                     chunk = None  # nothing arrived this tick — not EOF
                 else:
                     if not chunk:
@@ -281,7 +281,7 @@ class BmsConnection:
             try:
                 while self._tcp.recv(4096):
                     pass
-            except (socket.timeout, OSError):
+            except (TimeoutError, OSError):
                 pass
         elif self._serial is not None:
             self._serial.reset_input_buffer()
@@ -359,10 +359,10 @@ class EnergyTracker:
     def __init__(self, state_file: str = "") -> None:
         self.energy_in: float = 0.0
         self.energy_out: float = 0.0
-        self._last_time: Optional[float] = None  # time.monotonic() timestamp
-        self._last_power: Optional[float] = None
+        self._last_time: float | None = None  # time.monotonic() timestamp
+        self._last_power: float | None = None
         self._state_file = state_file
-        self._last_save_time: Optional[float] = None
+        self._last_save_time: float | None = None
         self._dirty = False
         if state_file:
             self._load()
@@ -735,7 +735,7 @@ def main() -> None:
     # -- BMS poll loop --
     bms = BmsConnection()
     energy = EnergyTracker(state_file=ENERGY_STATE_FILE)
-    system: Optional[PylontechSystem] = None
+    system: PylontechSystem | None = None
     info_fetched = False
 
     while True:
@@ -784,7 +784,7 @@ def main() -> None:
                 )
                 _fetch_batteries_indexed(bms, system)
                 if not system.batteries:
-                    raise IOError(
+                    raise OSError(
                         "Did not receive valid 'pwr' response (aggregate or indexed)"
                     )
             elif MONITORING_LEVEL in ("medium", "high"):
@@ -828,7 +828,8 @@ def main() -> None:
                 )
             else:
                 _LOGGER.info(
-                    "Published | V=%.2fV I=%.2fA SOC=%.1f%% P=%.1fW batteries=%d cells=%d",
+                    "Published | V=%.2fV I=%.2fA SOC=%.1f%% P=%.1fW "
+                    "batteries=%d cells=%d",
                     system.voltage,
                     system.current,
                     system.soc,
@@ -837,7 +838,7 @@ def main() -> None:
                     sum(len(b.cells) for b in system.batteries),
                 )
 
-        except (serial.SerialException, OSError, IOError) as err:
+        except (serial.SerialException, OSError) as err:
             _LOGGER.error("BMS connection error: %s — reconnecting in 5 s", err)
             client.publish(AVAIL_TOPIC, "offline", retain=True)
             bms.close()

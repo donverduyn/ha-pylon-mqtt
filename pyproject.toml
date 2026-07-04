@@ -14,6 +14,24 @@ markers = [
     "e2e: spawns real subprocesses (sidecar, Mosquitto, BMS stub) and/or exercises real timeout/retry/grace-window timing — excluded from the default run, see addopts",
 ]
 
+[tool.ruff]
+target-version = "py313"
+
+[tool.ruff.lint]
+# Beyond Ruff's bare default (E4/E7/E9/F): I (import sorting), B (bugbear,
+# common real bugs), UP (pyupgrade, drop dead Python<3.13 idioms), SIM
+# (flake8-simplify). Applied repo-wide, including tests, since none of these
+# rules relate to the typing strictness that [tool.mypy]/[tool.pyright]
+# deliberately relax for tests above — an unsorted import or a bare
+# try/except/pass is just as much a real issue in test code.
+select = ["E", "F", "I", "B", "UP", "SIM"]
+
+[tool.ruff.lint.per-file-ignores]
+# docstring reproduces two real, verbatim BMS wire-protocol header/data lines
+# (see parse_bat's docstring) — rewording or rewrapping them would misrepresent
+# the actual firmware output they document.
+"docker/pylontech_parser.py" = ["E501"]
+
 [tool.mypy]
 # Scoped to production code only (not tests): this is what Home Assistant's
 # strict-typing quality-scale rule actually gates on, and it's the CI source

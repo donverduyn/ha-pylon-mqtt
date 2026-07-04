@@ -240,7 +240,7 @@ class TestComputeEnergyStored:
     async def test_battery_missing_sys_id_is_skipped(
         self, coordinator: PylontechCoordinator
     ) -> None:
-        """A battery dict without sys_id must be silently skipped, not raise KeyError."""
+        """A battery dict without sys_id must be skipped, not raise KeyError."""
         # One valid battery (sys_id=1, soc=80) and one with no sys_id.
         no_id_bat = {k: v for k, v in _BAT1.items() if k != "sys_id"}
         s = coordinator._deserialize({**_PAYLOAD, "batteries": [_BAT1, no_id_bat]})
@@ -387,7 +387,7 @@ class TestAutoCapacity:
     async def test_set_only_on_first_payload(
         self, coordinator: PylontechCoordinator
     ) -> None:
-        """A second payload with a different spec must not override the first derived value."""
+        """A second payload with a different spec must not override the first value."""
         coordinator._process_payload(_PAYLOAD)  # 4.8 kWh
         coordinator._process_payload(
             {**_PAYLOAD, "spec": "48V/50AH"}
@@ -456,7 +456,7 @@ class TestAvailability:
     async def test_offline_message_marks_unavailable(
         self, hass: HomeAssistant, coordinator: PylontechCoordinator
     ) -> None:
-        """Receiving 'offline' on the avail topic must mark the coordinator unavailable."""
+        """Receiving 'offline' on the avail topic must mark coordinator unavailable."""
         coordinator.last_update_success = True
         coordinator._on_message(
             _FAKE_CLIENT, None, _msg("pylontech/stack/availability", "offline")
@@ -561,7 +561,7 @@ class TestStalenessWatchdog:
     async def test_online_after_offline_restores_available(
         self, hass: HomeAssistant, coordinator: PylontechCoordinator
     ) -> None:
-        """Receiving 'online' after 'offline' must restore availability when data exists."""
+        """'online' after 'offline' must restore availability if data exists."""
         coordinator._process_payload(_PAYLOAD)  # populate coordinator.data
         coordinator._mark_unavailable()  # simulate sidecar going offline
         assert coordinator.last_update_success is False
@@ -625,7 +625,7 @@ class TestStalenessWatchdog:
     async def test_state_message_not_dispatched_to_availability_handler(
         self, hass: HomeAssistant, coordinator: PylontechCoordinator
     ) -> None:
-        """A valid state JSON on the state topic must populate data, not change avail flag."""
+        """A valid state JSON on the state topic must populate data, not avail flag."""
         import json
 
         coordinator.last_update_success = False

@@ -47,6 +47,7 @@ Admin control (after ``login 000000``)
 """
 
 import argparse
+import contextlib
 import datetime
 import random
 import socketserver
@@ -242,7 +243,10 @@ _PROMPT = b"\r\npylon>"
 
 def _wrap(cmd_echo: str, body: str, kv: bool = False) -> bytes:
     after = "\n\r" if kv else "\r\n"
-    text = f"{cmd_echo}\n\r@\r{after}{body}\r\n\rCommand completed successfully\r\n\r$$\r\n\rpylon>"
+    text = (
+        f"{cmd_echo}\n\r@\r{after}{body}\r\n\r"
+        f"Command completed successfully\r\n\r$$\r\n\rpylon>"
+    )
     return text.encode("ascii", errors="replace")
 
 
@@ -378,7 +382,8 @@ def _resp_pwr_indexed(cmd: str, bat_id: int) -> bytes:
             kv("DMOS Status", dmos_st),
             # Protection enable masks — value exceeds 8 chars; formatted directly.
             f"{'Bat Protect ENA':<16}: OV HV LV UV SLP OT HT LT UT",
-            f"{'Pwr Protect ENA':<16}: OV HV LV UV SLP OT HT LT UT COC COC2 COCA DOCA DOC DOC2 SC",
+            f"{'Pwr Protect ENA':<16}: OV HV LV UV SLP OT HT LT UT "
+            "COC COC2 COCA DOCA DOC DOC2 SC",
             kv("Bat Events", bat_events),
             kv("Power Events", pwr_events),
             kv("System Fault", sys_fault_bits),
@@ -415,10 +420,8 @@ def _resp_pwr(cmd: str) -> bytes:
     parts = cmd.split()
     bat_id_filter: int | None = None
     if len(parts) > 1:
-        try:
+        with contextlib.suppress(ValueError):
             bat_id_filter = int(parts[1])
-        except ValueError:
-            pass
 
     # pwr N → vertical per-battery block (completely different format from table)
     if bat_id_filter is not None:
@@ -469,7 +472,8 @@ def _resp_pwr(cmd: str) -> bytes:
                 bv_st = volt_st
                 bt_st = temp_st
                 sys_alarm = "Alarm   " if fault and fault != "absent" else "Normal  "
-                # Raw value overrides — telemetry-driven monitors fire alongside status-string ones
+                # Raw value overrides — telemetry-driven monitors fire alongside
+                # status-string ones
                 dv = s["voltage"]
                 dc = s["current"]
                 dt = s["temperature"]
@@ -516,16 +520,16 @@ def _resp_pwr(cmd: str) -> bytes:
             else:
                 if firmware == "new":
                     rows.append(
-                        f"{bat_id:<6}-      -      -      -      -       -      -        "
-                        "-      -        -      -        "
-                        "Absent   -        -        -        -        -                    "
-                        "-        -        -         -        -       "
+                        f"{bat_id:<6}-      -      -      -      -       -      -      "
+                        "  -      -        -      -        Absent   -        -        -"
+                        "        -        -                    -        -        -     "
+                        "    -        -       "
                     )
                 else:
                     rows.append(
-                        f"{bat_id:<6}-      -      -      -      -      -      -      "
-                        "Absent   -        -        -        -        -                    "
-                        "-        -        -         -       "
+                        f"{bat_id:<6}-      -      -      -      -      -      -      A"
+                        "bsent   -        -        -        -        -                 "
+                        "   -        -        -         -       "
                     )
 
     body = header + "\r\r\n" + "\r\r\n".join(rows)
@@ -652,10 +656,8 @@ def _resp_bat(cmd: str) -> bytes:
     parts = cmd.split()
     bat_id = 1
     if len(parts) > 1:
-        try:
+        with contextlib.suppress(ValueError):
             bat_id = int(parts[1])
-        except ValueError:
-            pass
 
     if bat_id < 1 or bat_id > n_groups * slots_per_group:
         return _wrap(cmd, f"Battery {bat_id} not found")
@@ -721,10 +723,8 @@ def _resp_soh(cmd: str) -> bytes:
     parts = cmd.split()
     bat_id = 1
     if len(parts) > 1:
-        try:
+        with contextlib.suppress(ValueError):
             bat_id = int(parts[1])
-        except ValueError:
-            pass
 
     if bat_id < 1 or bat_id > n_groups * slots_per_group:
         return _wrap(cmd, f"Battery {bat_id} not found")
@@ -765,7 +765,8 @@ _HELP_TEXT = (
     "bat      Battery data show - bat [pwr][index]\r\n\r"
     "cmdquit  Quit console mode - cmdquit\r\n\r"
     "data     History data load - data [event/history/misc][item]\r\n\r"
-    "datalist Show recorded data - datalist [event/history/misc][item/bat][batnun]\r\n\r"
+    "datalist Show recorded data - datalist [event/history/misc][item/bat]"
+    "[batnun]\r\n\r"
     "disp     Display Info at regular intervals - disp [(pwrs pwrNo)/val]\r\n\r"
     "getpwr   Get power Info - getpwr\r\n\r"
     "help     Help [cmd]\r\n\r"
@@ -970,7 +971,8 @@ def _resp_stub(cmd: str) -> bytes:
     if len(parts) < 2:
         return _wrap(
             cmd,
-            "Usage: stub fault <bat> <ov|uv|ot|ut|oc|absent> | stub clear <bat> | stub soc <pct> | stub current <mA|auto>",
+            "Usage: stub fault <bat> <ov|uv|ot|ut|oc|absent> | stub clear <bat> | "
+            "stub soc <pct> | stub current <mA|auto>",
             kv=True,
         )
     sub = parts[1].lower()
@@ -1027,7 +1029,8 @@ def _resp_stub(cmd: str) -> bytes:
         )
     return _wrap(
         cmd,
-        "Usage: stub fault <bat> <ov|uv|ot|ut|oc|absent> | stub clear <bat> | stub soc <pct> | stub current <mA|auto>",
+        "Usage: stub fault <bat> <ov|uv|ot|ut|oc|absent> | stub clear <bat> | "
+        "stub soc <pct> | stub current <mA|auto>",
         kv=True,
     )
 

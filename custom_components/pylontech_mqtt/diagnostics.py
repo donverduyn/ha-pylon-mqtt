@@ -4,7 +4,9 @@ from typing import Any
 
 # async_redact_data's own overloaded signature resolves to a partially
 # unknown type in this HA version's stubs (a gap upstream, not here).
-from homeassistant.components.diagnostics import async_redact_data  # pyright: ignore[reportUnknownVariableType]
+from homeassistant.components.diagnostics import (
+    async_redact_data,  # pyright: ignore[reportUnknownVariableType]
+)
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 

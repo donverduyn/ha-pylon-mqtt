@@ -19,9 +19,11 @@ def test_invalid_connection_type_exits_before_connecting(monkeypatch, caplog) ->
     monkeypatch.setattr(main, "MQTT_BROKER", "localhost")
     monkeypatch.setattr(main, "CONNECTION_TYPE", "tpc")
 
-    with caplog.at_level(logging.ERROR, logger="pylon2mqtt"):
-        with pytest.raises(SystemExit) as exc_info:
-            main.main()
+    with (
+        caplog.at_level(logging.ERROR, logger="pylon2mqtt"),
+        pytest.raises(SystemExit) as exc_info,
+    ):
+        main.main()
 
     assert exc_info.value.code == 1
     assert "CONNECTION_TYPE must be" in caplog.text
@@ -38,9 +40,11 @@ def test_valid_connection_types_pass_this_check(monkeypatch, caplog) -> None:
     monkeypatch.setattr(main, "CONNECTION_TYPE", "tcp")
     monkeypatch.setattr(main, "TCP_HOST", "")
 
-    with caplog.at_level(logging.ERROR, logger="pylon2mqtt"):
-        with pytest.raises(SystemExit) as exc_info:
-            main.main()
+    with (
+        caplog.at_level(logging.ERROR, logger="pylon2mqtt"),
+        pytest.raises(SystemExit) as exc_info,
+    ):
+        main.main()
 
     assert exc_info.value.code == 1
     assert "TCP_HOST is required" in caplog.text
@@ -55,9 +59,11 @@ def test_invalid_monitoring_level_exits_before_connecting(monkeypatch, caplog) -
     monkeypatch.setattr(main, "MQTT_BROKER", "localhost")
     monkeypatch.setattr(main, "MONITORING_LEVEL", "med")
 
-    with caplog.at_level(logging.ERROR, logger="pylon2mqtt"):
-        with pytest.raises(SystemExit) as exc_info:
-            main.main()
+    with (
+        caplog.at_level(logging.ERROR, logger="pylon2mqtt"),
+        pytest.raises(SystemExit) as exc_info,
+    ):
+        main.main()
 
     assert exc_info.value.code == 1
     assert "MONITORING_LEVEL must be" in caplog.text
@@ -75,9 +81,11 @@ def test_valid_monitoring_levels_pass_this_check(monkeypatch, caplog, level) -> 
     monkeypatch.setattr(main, "MONITORING_LEVEL", level)
     monkeypatch.setattr(main, "POLL_INTERVAL", 0)
 
-    with caplog.at_level(logging.ERROR, logger="pylon2mqtt"):
-        with pytest.raises(SystemExit) as exc_info:
-            main.main()
+    with (
+        caplog.at_level(logging.ERROR, logger="pylon2mqtt"),
+        pytest.raises(SystemExit) as exc_info,
+    ):
+        main.main()
 
     assert exc_info.value.code == 1
     assert "POLL_INTERVAL must be" in caplog.text
@@ -93,9 +101,11 @@ def test_poll_interval_above_max_exits_before_connecting(monkeypatch, caplog) ->
     monkeypatch.setattr(main, "MQTT_BROKER", "localhost")
     monkeypatch.setattr(main, "POLL_INTERVAL", main._MAX_POLL_INTERVAL + 1)
 
-    with caplog.at_level(logging.ERROR, logger="pylon2mqtt"):
-        with pytest.raises(SystemExit) as exc_info:
-            main.main()
+    with (
+        caplog.at_level(logging.ERROR, logger="pylon2mqtt"),
+        pytest.raises(SystemExit) as exc_info,
+    ):
+        main.main()
 
     assert exc_info.value.code == 1
     assert "POLL_INTERVAL must be at most" in caplog.text

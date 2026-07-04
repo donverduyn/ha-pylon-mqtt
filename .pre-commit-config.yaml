@@ -1,0 +1,31 @@
+# Mirrors the checks CI runs in .github/workflows/tests.yaml's `lint` and
+# `meta-lint` jobs, so issues surface before a commit instead of after a push.
+# mypy/pyright are deliberately not included here: both need the project's
+# full dependency set (Home Assistant, pytest fixtures, etc.) on PYTHONPATH to
+# type-check correctly, which pre-commit's isolated hook environments don't
+# give them — they stay CI (and editor/Pylance)-only.
+#
+# Install with: pre-commit install
+repos:
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.15.20 # keep in sync with ruff's version in requirements_dev.txt
+    hooks:
+      - id: ruff-check
+      - id: ruff-format
+
+  - repo: https://github.com/shellcheck-py/shellcheck-py
+    rev: v0.11.0.1
+    hooks:
+      - id: shellcheck
+
+  - repo: https://github.com/rhysd/actionlint
+    rev: v1.7.12
+    hooks:
+      # Docker variant: no local Go toolchain/binary to install, just the
+      # Docker CLI this project's devcontainer already provides.
+      - id: actionlint-docker
+
+  - repo: https://github.com/hadolint/hadolint
+    rev: v2.14.0
+    hooks:
+      - id: hadolint-docker

@@ -89,7 +89,7 @@ class TestIntegration:
     async def test_system_sensors_registered_immediately_on_setup(
         self, hass: HomeAssistant
     ) -> None:
-        """System-level sensors must be in the entity registry right after entry loads."""
+        """System-level sensors must be in the entity registry right after setup."""
         entry, _ = await _create_entry(hass)
         ent_reg = er.async_get(hass)
         assert (
@@ -111,7 +111,7 @@ class TestIntegration:
     async def test_battery_sensors_added_after_first_message(
         self, hass: HomeAssistant
     ) -> None:
-        """Battery sensors must be dynamically created once the first payload arrives."""
+        """Battery sensors must be created once the first payload arrives."""
         entry, coordinator = await _create_entry(hass)
         ent_reg = er.async_get(hass)
 

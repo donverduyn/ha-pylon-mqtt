@@ -14,8 +14,11 @@ from homeassistant.core import HomeAssistant
 # TextSelector's own declared type is partially unknown (a gap in HA core's
 # stubs, not this integration) — only the import triggers it, not any use
 # of the class below.
-from homeassistant.helpers.selector import TextSelector  # pyright: ignore[reportUnknownVariableType]
-from homeassistant.helpers.selector import TextSelectorConfig, TextSelectorType
+from homeassistant.helpers.selector import (
+    TextSelector,  # pyright: ignore[reportUnknownVariableType]
+    TextSelectorConfig,
+    TextSelectorType,
+)
 from paho.mqtt.client import ConnectFlags
 from paho.mqtt.enums import CallbackAPIVersion
 from paho.mqtt.properties import Properties
@@ -63,7 +66,7 @@ def _reason_code_to_error(reason_code: ReasonCode) -> str | None:
 def _test_mqtt_connection(
     host: str, port: int, user: str = "", password: str = "", use_tls: bool = False
 ) -> str | None:
-    """Attempt a real MQTT connection; return None on success or an error key on failure.
+    """Attempt a real MQTT connection; return None on success or an error key.
 
     Returns ``"invalid_auth"`` when the broker rejects the credentials, or
     ``"cannot_connect"`` for all other failures (unreachable host, timeout,
@@ -182,7 +185,7 @@ async def _validate_broker(
             ),
             timeout=10.0,
         )
-    except asyncio.TimeoutError:
+    except TimeoutError:
         return "cannot_connect"
 
 

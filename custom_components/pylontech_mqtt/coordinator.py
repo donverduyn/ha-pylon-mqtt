@@ -284,7 +284,7 @@ class PylontechCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self.hass.loop.call_soon_threadsafe(self._process_payload, payload)
 
     def _process_payload(self, payload: object) -> None:
-        """Deserialize and update coordinator data. Always called on the HA event loop."""
+        """Deserialize and update coordinator data. Always runs on the HA event loop."""
         if not isinstance(payload, dict):
             _LOGGER.error(
                 "Unexpected MQTT payload type '%s' — expected a JSON object; dropping",

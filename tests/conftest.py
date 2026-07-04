@@ -42,7 +42,8 @@ _ROOT = Path(__file__).parent.parent
 def _enable_sockets() -> None:
     """Re-enable real TCP sockets (no-op when pytest-socket is not installed)."""
     try:
-        import pytest_socket as _ps  # installed by pytest-homeassistant-custom-component
+        # installed by pytest-homeassistant-custom-component
+        import pytest_socket as _ps
 
         _ps.enable_socket()
     except ImportError:
@@ -50,7 +51,7 @@ def _enable_sockets() -> None:
 
 
 @pytest.fixture(autouse=True)
-def _restore_sockets_per_test() -> Generator[None, None, None]:
+def _restore_sockets_per_test() -> Generator[None]:
     """Re-enable sockets for each test after the HA plugin's per-test blocking."""
     _enable_sockets()
     yield
@@ -145,7 +146,8 @@ def _wait_for_port(host: str, port: int, timeout: float = 5.0) -> None:
 @pytest.fixture(scope="session")
 def stub_server():
     """Start pylon_stub.py once for the whole test session; yield the port."""
-    _enable_sockets()  # session fixture runs after pytest_runtest_setup() blocks sockets
+    # session fixture runs after pytest_runtest_setup() blocks sockets
+    _enable_sockets()
     proc = subprocess.Popen(
         [
             sys.executable,
@@ -199,7 +201,7 @@ def _drain_prompt(sock: socket.socket) -> None:
             data += chunk
             if b"pylon>" in data:
                 break
-        except socket.timeout:
+        except TimeoutError:
             break
 
 
@@ -220,7 +222,7 @@ def _raw_command(sock: socket.socket, cmd: str, timeout: float = 3.0) -> str:
             data += chunk
             if b"pylon>" in data:
                 break
-        except socket.timeout:
+        except TimeoutError:
             if b"pylon>" in data:
                 break
     return data.decode("ascii", errors="replace")

@@ -48,7 +48,8 @@ class TestParsePwr:
     def test_battery_temperature_plausible(self, pwr_system):
         for bat in pwr_system.batteries:
             assert 0 < bat.temperature < 80, (
-                f"bat {bat.sys_id}: temperature {bat.temperature} out of plausible range"
+                f"bat {bat.sys_id}: temperature {bat.temperature} out of plausible "
+                "range"
             )
 
     def test_battery_soc_matches_stub_start(self, pwr_system):
@@ -66,7 +67,8 @@ class TestParsePwr:
         for bat in pwr_system.batteries:
             expected = round(bat.voltage * bat.current, 2)
             assert bat.power == expected, (
-                f"bat {bat.sys_id}: power mismatch (got {bat.power}, expected {expected})"
+                f"bat {bat.sys_id}: power mismatch "
+                f"(got {bat.power}, expected {expected})"
             )
 
     # --- Extended pwr columns (Tlow/Thigh/Vlow/Vhigh) ---
@@ -82,7 +84,8 @@ class TestParsePwr:
     def test_cell_temp_ordering(self, pwr_system):
         for bat in pwr_system.batteries:
             assert bat.temp_low <= bat.temp_high, (
-                f"bat {bat.sys_id}: temp_low ({bat.temp_low}) > temp_high ({bat.temp_high})"
+                f"bat {bat.sys_id}: temp_low ({bat.temp_low}) "
+                f"> temp_high ({bat.temp_high})"
             )
 
     def test_cell_volt_low_present(self, pwr_system):
@@ -96,7 +99,8 @@ class TestParsePwr:
     def test_cell_volt_ordering(self, pwr_system):
         for bat in pwr_system.batteries:
             assert bat.volt_low <= bat.volt_high, (
-                f"bat {bat.sys_id}: volt_low ({bat.volt_low}) > volt_high ({bat.volt_high})"
+                f"bat {bat.sys_id}: volt_low ({bat.volt_low}) "
+                f"> volt_high ({bat.volt_high})"
             )
 
     def test_cell_volt_plausible_range(self, pwr_system):
@@ -569,9 +573,11 @@ class TestParsePwrEdgeCases:
         raw = (
             "pwr\r\n@\r\r\n"
             "Power Volt   Curr   Tempr  Tlow   Thigh  Vlow   Vhigh  Base.St  "
-            "Volt.St  Curr.St  Temp.St  Coulomb  Time                 B.V.St   B.T.St  \r\r\n"
+            "Volt.St  Curr.St  Temp.St  Coulomb  Time                 B.V.St   B.T.St  "
+            "\r\r\n"
             "1     50691  3806   17000  -      -      -      -      Charge   "
-            "Normal   Normal   Normal   89%      2025-12-21 20:53:06  Normal   Normal  \r\r\n"
+            "Normal   Normal   Normal   89%      2025-12-21 20:53:06  Normal   Normal  "
+            "\r\r\n"
             "Command completed successfully\r\n\r$$\r\npylon>"
         )
         system = PylontechParser.parse_pwr(raw)
@@ -613,7 +619,8 @@ class TestParsePwrEdgeCases:
         # Status string columns (indices 9,10,11) are missing
         raw = (
             "pwr\r\n@\r\r\n"
-            "Power Volt   Curr   Tempr  Tlow   Thigh  Vlow   Vhigh  Base.St  Coulomb\r\r\n"
+            "Power Volt   Curr   Tempr  Tlow   Thigh  Vlow   Vhigh  Base.St  Coulomb"
+            "\r\r\n"
             "1     50000  2000   17000  12000  15000  3300   3350   Charge   60%\r\r\n"
             "Command completed successfully\r\npylon>"
         )
@@ -631,13 +638,16 @@ class TestParsePwrEdgeCases:
         raw = (
             "pwr\r\n@\r\r\n"
             "Power Volt   Curr   Tempr  Tlow   Thigh  Vlow   Vhigh  Base.St  "
-            "Volt.St  Curr.St  Temp.St  Coulomb  Time                 B.V.St   B.T.St\r\r\n"
+            "Volt.St  Curr.St  Temp.St  Coulomb  Time                 B.V.St   B.T.St"
+            "\r\r\n"
             # 'XXXX' is not a valid integer for voltage
             "1     XXXX   3806   17000  13000  14000  3378   3381   Charge   "
-            "Normal   Normal   Normal   89%      2025-12-21 20:53:06  Normal   Normal\r\r\n"
+            "Normal   Normal   Normal   89%      2025-12-21 20:53:06  Normal   Normal"
+            "\r\r\n"
             # A valid row follows to prove parsing continues after the error
             "2     50691  3806   17000  13000  14000  3378   3381   Charge   "
-            "Normal   Normal   Normal   89%      2025-12-21 20:53:06  Normal   Normal\r\r\n"
+            "Normal   Normal   Normal   89%      2025-12-21 20:53:06  Normal   Normal"
+            "\r\r\n"
             "Command completed successfully\r\npylon>"
         )
         with caplog.at_level(logging.ERROR):
@@ -682,9 +692,11 @@ class TestParsePwrEdgeCases:
         raw = (
             "pwr\r\n@\r\r\n"
             "Power Volt   Curr   Tempr  Tlow   Thigh  Vlow   Vhigh  Base.St  "
-            "Volt.St  Curr.St  Temp.St  Coulomb  Time                 B.V.St   B.T.St\r\r\n"
+            "Volt.St  Curr.St  Temp.St  Coulomb  Time                 B.V.St   B.T.St"
+            "\r\r\n"
             "1     50000  3000   16000  12000  13000  3340   3360   Charge   "
-            "Normal   Normal   Normal   80%      2025-12-21 20:53:06  Normal   Normal\r\r\n"
+            "Normal   Normal   Normal   80%      2025-12-21 20:53:06  Normal   Normal"
+            "\r\r\n"
             "Command completed successfully\r\npylon>"
         )
         result = PylontechParser.parse_pwr(raw, existing)
@@ -864,7 +876,7 @@ class TestParseBat:
             assert cell.capacity > 0
 
     def test_absent_battery_has_no_cells(self, stub_conn):
-        """Requesting 'bat N' for an absent/unknown slot must yield an empty cell list."""
+        """Requesting 'bat N' for an absent/unknown slot must yield no cells."""
         from pylontech_parser import PylontechParser
         from structs import PylontechBattery
 
@@ -941,9 +953,11 @@ class TestParseBat:
             "Power  Volt   Curr   Tempr  Tlow   Thigh  Vlow   Vhigh  "
             "Base.St Volt.St Curr.St Temp.St Coulomb Time           B.V.St B.T.St\r\n"
             "1      50200  10000  25000  24500  25500  3350   3360   "
-            "Absent  Normal  Normal  Normal  80%    2025-01-01 12:00:00  Normal Normal\r\n"
+            "Absent  Normal  Normal  Normal  80%    2025-01-01 12:00:00  Normal Normal"
+            "\r\n"
             "2      50100  9900   25100  24600  25400  3340   3370   "
-            "Absent  Normal  Normal  Normal  79%    2025-01-01 12:00:00  Normal Normal\r\n"
+            "Absent  Normal  Normal  Normal  79%    2025-01-01 12:00:00  Normal Normal"
+            "\r\n"
             "Command completed successfully\r\npylon>"
         )
         # Start with a system that already has non-zero totals from a previous poll.

@@ -11,6 +11,29 @@ This integration works in two parts:
 
 The parsing logic (`parser.py`, `structs.py`) lives inside the integration and is copied into the Docker image at build time, ensuring both sides always use identical logic.
 
+## Development Setup
+
+The devcontainer (`.devcontainer/`) sets up a matching venv automatically; if
+you're not using it, activate your own venv first, then run:
+
+```sh
+make setup   # installs the pinned dev toolchain and a pre-commit hook
+```
+
+`make setup` runs `pre-commit install`, so `ruff check`/`ruff format`/
+ShellCheck/Hadolint/actionlint (see `.pre-commit-config.yaml`) run
+automatically on every commit — the same checks CI enforces in
+`.github/workflows/tests.yaml`, just earlier.
+
+| Command           | What it does                                            |
+| ------------------ | -------------------------------------------------------- |
+| `make test`        | Runs the fast test suite (`pytest`, e2e tests excluded)   |
+| `make test-e2e`    | Runs the e2e suite (real subprocesses, real timing)       |
+| `make lint`        | `ruff check` + `ruff format --check`                      |
+| `make format`      | Applies `ruff format`                                     |
+| `make typecheck`   | `mypy` + `pyright`                                        |
+| `make clean`       | Removes cache/coverage artifacts                          |
+
 ## Adding Translations
 
 We welcome translations to make this integration accessible to everyone!

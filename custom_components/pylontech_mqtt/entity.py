@@ -95,7 +95,7 @@ class PylontechBatteryEntity(CoordinatorEntity[PylontechCoordinator]):
 
 
 class PylontechCellEntity(PylontechBatteryEntity):
-    """Base class for per-cell entities, attached to the parent battery module device."""
+    """Base class for per-cell entities, attached to the parent battery module."""
 
     def __init__(
         self,

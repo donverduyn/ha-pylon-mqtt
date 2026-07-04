@@ -161,7 +161,7 @@ class TestBatterySensorNativeValue:
     async def test_energy_stored_computed(
         self, coord_with_data: PylontechCoordinator
     ) -> None:
-        """energy_stored = spec-derived capacity(4.8 kWh for 48V/100AH) × soc(80%) = 3.84 kWh."""
+        """energy_stored = spec capacity(4.8 kWh, 48V/100AH) × soc(80%) = 3.84 kWh."""
         assert _bat(coord_with_data, "energy_stored").native_value == pytest.approx(
             3.84, rel=1e-3
         )

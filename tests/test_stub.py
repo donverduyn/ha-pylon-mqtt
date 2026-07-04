@@ -212,7 +212,7 @@ class TestStubAdditionalCommands:
 
 class TestStubCmdquit:
     def test_cmdquit_writes_quit_message(self, stub_server):
-        """After cmdquit the server writes the quit message and closes the TCP session."""
+        """After cmdquit the server writes the quit message and closes the session."""
         s = socket.create_connection((STUB_HOST, stub_server), timeout=3)
         _drain_prompt(s)
         s.sendall(b"cmdquit\n")
@@ -224,7 +224,7 @@ class TestStubCmdquit:
                 if not chunk:
                     break
                 data += chunk
-        except socket.timeout:
+        except TimeoutError:
             pass
         s.close()
         decoded = data.decode("ascii", errors="replace")
@@ -245,7 +245,7 @@ class TestStubCmdquit:
                     # EOF — server closed the connection cleanly
                     break
                 received += chunk
-        except socket.timeout:
+        except TimeoutError:
             pass
         s.close()
         # We must have received something (the quit message), and b'' signals EOF
@@ -329,7 +329,8 @@ class TestStubBatCommand:
     def test_bat_has_correct_cell_count(self, stub_conn):
         """US5000 has 15 cells; each row ends with '{cap} mAH'."""
         resp = _raw_command(stub_conn, "bat 1")
-        # The header row contains 'Coulomb' but not 'mAH'; each cell row ends with 'N mAH'
+        # The header row contains 'Coulomb' but not 'mAH'; each cell row ends
+        # with 'N mAH'
         assert resp.count("mAH") == 15
 
     def test_bat_has_state_columns(self, stub_conn):

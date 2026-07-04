@@ -11,10 +11,10 @@ bms.close(), no energy.flush()).
 """
 
 import signal
+from unittest.mock import MagicMock
 
 import main
 import pytest
-from unittest.mock import MagicMock
 
 
 class _RaisingBmsConnection:
@@ -22,7 +22,7 @@ class _RaisingBmsConnection:
     the reconnect except-block on its first iteration."""
 
     def send_command(self, *_args, **_kwargs):
-        raise IOError("simulated BMS failure")
+        raise OSError("simulated BMS failure")
 
     def close(self):
         pass
