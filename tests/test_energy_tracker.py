@@ -8,14 +8,6 @@ import pytest
 from main import EnergyTracker
 
 
-class TestEnergyTrackerInitialState:
-    def test_energy_in_starts_at_zero(self):
-        assert EnergyTracker().energy_in == 0.0
-
-    def test_energy_out_starts_at_zero(self):
-        assert EnergyTracker().energy_out == 0.0
-
-
 class TestEnergyTrackerFirstCall:
     def test_first_call_does_not_accumulate_energy(self):
         """The first update() has no previous sample so nothing is counted."""

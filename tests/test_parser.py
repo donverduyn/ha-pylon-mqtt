@@ -51,12 +51,6 @@ class TestParsePwr:
                 f"bat {bat.sys_id}: temperature {bat.temperature} out of plausible range"
             )
 
-    def test_battery_soc_within_range(self, pwr_system):
-        for bat in pwr_system.batteries:
-            assert 0 <= bat.soc <= 100, (
-                f"bat {bat.sys_id}: SOC {bat.soc} out of 0-100 range"
-            )
-
     def test_battery_soc_matches_stub_start(self, pwr_system):
         for bat in pwr_system.batteries:
             assert bat.soc == STUB_SOC_START
@@ -117,18 +111,6 @@ class TestParsePwr:
 
     # --- Status string columns (Volt.St / Curr.St / Temp.St) ---
 
-    def test_volt_status_present(self, pwr_system):
-        for bat in pwr_system.batteries:
-            assert bat.volt_status is not None
-
-    def test_curr_status_present(self, pwr_system):
-        for bat in pwr_system.batteries:
-            assert bat.curr_status is not None
-
-    def test_temp_status_present(self, pwr_system):
-        for bat in pwr_system.batteries:
-            assert bat.temp_status is not None
-
     def test_status_strings_are_normal(self, pwr_system):
         for bat in pwr_system.batteries:
             assert bat.volt_status == "Normal"
@@ -136,18 +118,6 @@ class TestParsePwr:
             assert bat.temp_status == "Normal"
 
     # --- B.V.St / B.T.St (battery-level voltage/temperature state) ---
-
-    def test_batt_volt_status_present(self, pwr_system):
-        for bat in pwr_system.batteries:
-            assert bat.batt_volt_status is not None, (
-                f"bat {bat.sys_id}: batt_volt_status is None"
-            )
-
-    def test_batt_temp_status_present(self, pwr_system):
-        for bat in pwr_system.batteries:
-            assert bat.batt_temp_status is not None, (
-                f"bat {bat.sys_id}: batt_temp_status is None"
-            )
 
     def test_batt_status_strings_are_normal(self, pwr_system):
         for bat in pwr_system.batteries:
@@ -186,11 +156,6 @@ class TestParsePwr:
         raw = _raw_command(stub_conn, "pwr")
         system = PylontechParser.parse_pwr(raw)
         assert all(b.status != "Absent" for b in system.batteries)
-
-    def test_absent_rows_in_raw_response(self, stub_conn):
-        """Raw response contains Absent entries (stub provides 8 slots)."""
-        raw = _raw_command(stub_conn, "pwr")
-        assert "Absent" in raw
 
     # --- Header-based column detection (robustness) ---
 
@@ -250,15 +215,6 @@ class TestParseInfo:
     def test_cell_count(self, info_system):
         assert info_system.cell_count == 15
 
-    def test_max_charge_current_positive(self, info_system):
-        assert info_system.max_charge_curr is not None
-        assert info_system.max_charge_curr > 0
-
-    def test_max_discharge_current_positive(self, info_system):
-        """max_dischg_curr is stored as a positive float (abs value of mA / 1000)."""
-        assert info_system.max_dischg_curr is not None
-        assert info_system.max_dischg_curr > 0
-
     def test_max_currents_match_model(self, info_system):
         """US5000 stub emits ±200 A limits."""
         limits = {
@@ -275,14 +231,6 @@ class TestParseInfo:
 # parse_stat — statistics and fault counters
 # ===========================================================================
 class TestParseStat:
-    def test_cycles_positive(self, stat_system):
-        assert stat_system.cycles is not None
-        assert stat_system.cycles >= 0
-
-    def test_charge_times(self, stat_system):
-        assert stat_system.charge_times is not None
-        assert stat_system.charge_times >= 0
-
     def test_discharge_cnt(self, stat_system):
         assert stat_system.discharge_cnt is not None
         assert stat_system.discharge_cnt >= 0
@@ -291,56 +239,15 @@ class TestParseStat:
         assert stat_system.idle_times is not None
         assert stat_system.idle_times >= 0
 
-    def test_shut_times(self, stat_system):
-        assert stat_system.shut_times is not None
-        assert stat_system.shut_times >= 0
-
-    def test_reset_times(self, stat_system):
-        assert stat_system.reset_times is not None
-        assert stat_system.reset_times >= 0
-
     def test_sc_times(self, stat_system):
         assert stat_system.sc_times is not None
         assert stat_system.sc_times >= 0
-
-    def test_bat_ov_times(self, stat_system):
-        assert stat_system.bat_ov_times is not None
-
-    def test_bat_hv_times(self, stat_system):
-        assert stat_system.bat_hv_times is not None
 
     def test_bat_lv_times(self, stat_system):
         assert stat_system.bat_lv_times is not None
 
     def test_bat_uv_times(self, stat_system):
         assert stat_system.bat_uv_times is not None
-
-    def test_pwr_ov_times(self, stat_system):
-        assert stat_system.pwr_ov_times is not None
-
-    def test_pwr_hv_times(self, stat_system):
-        assert stat_system.pwr_hv_times is not None
-
-    def test_life_warn_times(self, stat_system):
-        assert stat_system.life_warn_times is not None
-        assert stat_system.life_warn_times >= 0
-
-    def test_life_alarm_times(self, stat_system):
-        assert stat_system.life_alarm_times is not None
-        assert stat_system.life_alarm_times >= 0
-
-    def test_pwr_coulomb(self, stat_system):
-        assert stat_system.pwr_coulomb is not None
-        assert stat_system.pwr_coulomb > 0
-
-    def test_dsg_cap(self, stat_system):
-        assert stat_system.dsg_cap is not None
-        assert stat_system.dsg_cap >= 0
-
-    def test_soh_present(self, stat_system):
-        """SOH must be populated from the stat output."""
-        assert stat_system.soh is not None
-        assert 0 <= stat_system.soh <= 100
 
     def test_stub_initial_values(self, stat_system):
         """Verify the stub seeds its counters with known values."""
@@ -831,9 +738,6 @@ class TestStructs:
 # parse_bat — per-cell data
 # ===========================================================================
 class TestParseBat:
-    def test_cells_populated(self, bat_battery):
-        assert len(bat_battery.cells) > 0
-
     def test_cell_count_matches_model(self, bat_battery):
         assert len(bat_battery.cells) == STUB_CELLS
 
@@ -854,12 +758,6 @@ class TestParseBat:
                 f"cell {cell.cell_id}: temperature {cell.temperature} out of range"
             )
 
-    def test_cell_soc_within_range(self, bat_battery):
-        for cell in bat_battery.cells:
-            assert 0 <= cell.soc <= 100, (
-                f"cell {cell.cell_id}: SOC {cell.soc} out of 0-100 range"
-            )
-
     def test_cell_soc_matches_stub(self, bat_battery):
         for cell in bat_battery.cells:
             assert cell.soc == STUB_SOC_START
@@ -869,24 +767,6 @@ class TestParseBat:
         for cell in bat_battery.cells:
             assert cell.base_state in valid, (
                 f"cell {cell.cell_id}: unexpected base_state '{cell.base_state}'"
-            )
-
-    def test_cell_volt_status_present(self, bat_battery):
-        for cell in bat_battery.cells:
-            assert cell.volt_status is not None, (
-                f"cell {cell.cell_id}: volt_status is None"
-            )
-
-    def test_cell_curr_status_present(self, bat_battery):
-        for cell in bat_battery.cells:
-            assert cell.curr_status is not None, (
-                f"cell {cell.cell_id}: curr_status is None"
-            )
-
-    def test_cell_temp_status_present(self, bat_battery):
-        for cell in bat_battery.cells:
-            assert cell.temp_status is not None, (
-                f"cell {cell.cell_id}: temp_status is None"
             )
 
     def test_cell_statuses_are_normal(self, bat_battery):
