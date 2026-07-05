@@ -4,7 +4,7 @@ pythonpath  = ["tests", ".", "docker"]     # "." makes custom_components importa
 # "-m 'not e2e'" keeps a bare `pytest` fast and deterministic (no
 # subprocesses, no real broker, no waiting out real timeouts/retries); run
 # the e2e suite explicitly with `pytest -m e2e`.
-addopts     = "-v --tb=short --allow-hosts=127.0.0.1,localhost -m 'not e2e'"
+addopts     = "-v --tb=short --allow-hosts=127.0.0.1,localhost -m 'not e2e' -p no:sugar"
 asyncio_mode = "auto"
 # Silences pytest-asyncio's "unset" deprecation warning; "function" matches
 # what it already defaults to today, so this is a no-op now and a guard

@@ -1,5 +1,9 @@
 {
   "python.defaultInterpreterPath": "/home/vscode/.venv/bin/python",
+  // devcontainer.json's remoteEnv already puts the venv's bin/ on PATH for
+  // every shell, so the Python extension's default auto-activation just
+  // adds a redundant `source .venv/bin/activate` line to every new terminal.
+  "python.terminal.activateEnvironment": false,
   "editor.formatOnSave": true,
   "[python]": {
     "editor.defaultFormatter": "charliermarsh.ruff",

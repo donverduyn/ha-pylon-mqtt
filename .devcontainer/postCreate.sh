@@ -1,6 +1,32 @@
 #!/bin/sh
 set -e
 
+# devcontainer.json bind-mounts individual files (not whole directories) into
+# several of these paths. When a mount's parent directory doesn't already
+# exist in the base image, Docker auto-creates it before this script ever
+# runs — and it does so as root, leaving the vscode user unable to write
+# anything else alongside the mounted file (seen in practice: Antigravity
+# CLI failing with "creating log directory: permission denied" and
+# "installation_id: permission denied", because it can't create files next
+# to its read-only-mounted settings.json). ~/.claude is unaffected because
+# the claude-code feature creates it (vscode-owned) at image build time, so
+# its mount never needed an auto-created parent. `|| true` throughout since
+# this is best-effort hardening, not something that should abort provisioning
+# if a path is already correctly owned or a mount layout changes.
+for d in \
+  "$HOME/.gemini" \
+  "$HOME/.gemini/antigravity-cli" \
+  "$HOME/.codex" \
+  "$HOME/.config/opencode" \
+  "$HOME/.config/kilo" \
+  "$HOME/.config/gh" \
+  "$HOME/.local/share/opencode"; do
+  sudo mkdir -p "$d" || true
+  sudo chown vscode:vscode "$d" || true
+done
+# Whole-directory mount (not per-file), so its contents need to be usable too.
+sudo chown -R vscode:vscode "$HOME/.copilot" || true
+
 # xdg-utils provides xdg-open, which opencode/other CLIs shell out to for browser-based
 # auth flows; without it, browser launches silently fail even though $BROWSER is set.
 sudo apt-get update

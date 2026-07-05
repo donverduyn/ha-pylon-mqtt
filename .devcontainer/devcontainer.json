@@ -17,10 +17,10 @@
     "ghcr.io/devcontainers/features/copilot-cli:1": {},
     "ghcr.io/aqua/devcontainer-antigravity-cli/antigravity-cli:1": {},
     "ghcr.io/devcontainers/features/docker-outside-of-docker:1": {
-			"version": "latest",
-			"enableNonRootDocker": "true",
-			"moby": "true"
-		}
+      "version": "latest",
+      "enableNonRootDocker": "true",
+      "moby": "false"
+    }
   },
   "containerEnv": {
     "VIRTUAL_ENV": "/home/vscode/.venv"
@@ -31,9 +31,14 @@
   "initializeCommand": "bash .devcontainer/seedHostAgentConfig.sh",
   // Bind-mounts so every AI CLI's login and hand-set preferences survive a
   // container rebuild instead of re-provisioning from scratch each time.
-  // Read-only by default (see the per-entry `readonly` flag below); a mount
-  // only gets write access when the tool needs to rewrite it for auth.
-  // Deliberately file-level (not whole tool directories) except where noted:
+  // These started out read-only wherever a file looked like pure hand-set
+  // preference, on the theory that only auth needs write access — but in
+  // practice every one of these "preference" files turned out to also be
+  // rewritten by its tool at runtime (trust prompts, first-run settings,
+  // `config set`-style commands), and read-only broke each one with an
+  // opaque disk-write error the first time that happened. So all of the
+  // mounts below are read-write now; see the failure this caused for each,
+  // inline. Deliberately file-level (not whole tool directories) except where noted:
   // several of these tools keep an actively-written SQLite WAL database
   // right next to their config (Codex/OpenCode/Copilot), and bind-mounting
   // that is a known source of slowness/flakiness, especially on non-Linux
@@ -52,16 +57,17 @@
   //   Antigravity   -> .gemini/settings.json in the repo root (shares Gemini CLI's settings engine)
   //   GitHub CLI    -> no native project-level override; global-only
   "mounts": [
-    // Default posture: read-only. A mount only gets write access when the
-    // tool needs to rewrite it as part of normal auth (token refresh, login
-    // state) — never just because the tool happens to touch the file.
-    //
     // Claude Code: auto memory now lives in-project (see .claude/settings.json's
     // autoMemoryDirectory), so ~/.claude no longer needs a whole-directory
     // mount. daemon/, sessions/, cache/, plugins/, file-history/, etc. are
     // therefore deliberately NOT mounted — they're operational state, not
     // auth or a hand-set preference, so they just live/die with the container.
-    "source=${localEnv:HOME}${localEnv:USERPROFILE}/.claude/settings.json,target=/home/vscode/.claude/settings.json,type=bind,readonly",
+    //
+    // Not hand-edited only, though — approving a permission prompt and
+    // choosing "user" scope writes the allow rule straight into this file,
+    // same class of runtime write as everything else below that turned out
+    // to need read-write.
+    "source=${localEnv:HOME}${localEnv:USERPROFILE}/.claude/settings.json,target=/home/vscode/.claude/settings.json,type=bind",
     "source=${localEnv:HOME}${localEnv:USERPROFILE}/.claude/.credentials.json,target=/home/vscode/.claude/.credentials.json,type=bind",
     // Mixes an OAuth session token with MCP config and per-project trust
     // state in one file — can't split those apart, so the auth requirement
@@ -69,9 +75,17 @@
     "source=${localEnv:HOME}${localEnv:USERPROFILE}/.claude.json,target=/home/vscode/.claude.json,type=bind",
     // Codex
     "source=${localEnv:HOME}${localEnv:USERPROFILE}/.codex/auth.json,target=/home/vscode/.codex/auth.json,type=bind",
-    "source=${localEnv:HOME}${localEnv:USERPROFILE}/.codex/config.toml,target=/home/vscode/.codex/config.toml,type=bind,readonly",
+    // Not hand-edited only — Codex also writes directory-trust decisions
+    // into this file at runtime ("Yes, continue" at its trust prompt).
+    // Read-only makes that fail with "failed to persist config.toml", so
+    // this has to stay writable despite being a native per-project config.
+    "source=${localEnv:HOME}${localEnv:USERPROFILE}/.codex/config.toml,target=/home/vscode/.codex/config.toml,type=bind",
     // OpenCode
-    "source=${localEnv:HOME}${localEnv:USERPROFILE}/.config/opencode/opencode.jsonc,target=/home/vscode/.config/opencode/opencode.jsonc,type=bind,readonly",
+    // Not hand-edited only — confirmed via `opencode mcp add` (when no
+    // project-level opencode.json exists to take precedence): it falls back
+    // to writing this global file and fails with "EROFS: read-only file
+    // system" if it can't.
+    "source=${localEnv:HOME}${localEnv:USERPROFILE}/.config/opencode/opencode.jsonc,target=/home/vscode/.config/opencode/opencode.jsonc,type=bind",
     "source=${localEnv:HOME}${localEnv:USERPROFILE}/.local/share/opencode/auth.json,target=/home/vscode/.local/share/opencode/auth.json,type=bind",
     // Kilocode CLI (its node_modules dir is a build artifact with
     // host-arch-specific native binaries — deliberately not mounted).
@@ -82,7 +96,9 @@
     "source=${localEnv:HOME}${localEnv:USERPROFILE}/.config/kilo/kilo.jsonc,target=/home/vscode/.config/kilo/kilo.jsonc,type=bind",
     // GitHub CLI
     "source=${localEnv:HOME}${localEnv:USERPROFILE}/.config/gh/hosts.yml,target=/home/vscode/.config/gh/hosts.yml,type=bind",
-    "source=${localEnv:HOME}${localEnv:USERPROFILE}/.config/gh/config.yml,target=/home/vscode/.config/gh/config.yml,type=bind,readonly",
+    // Not hand-edited only — confirmed via `gh config set`, which fails with
+    // "failed to write config to disk: ... read-only file system".
+    "source=${localEnv:HOME}${localEnv:USERPROFILE}/.config/gh/config.yml,target=/home/vscode/.config/gh/config.yml,type=bind",
     // GitHub Copilot CLI: whole directory, not a file, and read-write — its
     // login lives inside session-store.db (SQLite) alongside everything
     // else it stores, so auth can't be isolated from the rest here.
@@ -91,11 +107,20 @@
     "source=${localEnv:HOME}${localEnv:USERPROFILE}/.gemini/oauth_creds.json,target=/home/vscode/.gemini/oauth_creds.json,type=bind",
     // Written by the login flow itself, not hand-edited — treated as auth-adjacent.
     "source=${localEnv:HOME}${localEnv:USERPROFILE}/.gemini/google_accounts.json,target=/home/vscode/.gemini/google_accounts.json,type=bind",
-    "source=${localEnv:HOME}${localEnv:USERPROFILE}/.gemini/settings.json,target=/home/vscode/.gemini/settings.json,type=bind,readonly",
-    // Not auth, but auto-written when you accept a trust prompt — read-only
-    // means re-accepting that prompt after every rebuild.
-    "source=${localEnv:HOME}${localEnv:USERPROFILE}/.gemini/trustedFolders.json,target=/home/vscode/.gemini/trustedFolders.json,type=bind,readonly",
-    "source=${localEnv:HOME}${localEnv:USERPROFILE}/.gemini/antigravity-cli/settings.json,target=/home/vscode/.gemini/antigravity-cli/settings.json,type=bind,readonly",
+    // Not hand-edited only — its own content is runtime-written state (e.g.
+    // "ide": {"hasSeenNudge": true}, "security": {"auth": {"selectedType":
+    // ...}}), not something a user hand-types, so this needs to stay
+    // writable for the same reason as everything else here.
+    "source=${localEnv:HOME}${localEnv:USERPROFILE}/.gemini/settings.json,target=/home/vscode/.gemini/settings.json,type=bind",
+    // Auto-written when you accept a trust prompt — was read-only, which
+    // meant re-accepting that prompt after every rebuild; now writable so it
+    // persists like every other trust/config file above.
+    "source=${localEnv:HOME}${localEnv:USERPROFILE}/.gemini/trustedFolders.json,target=/home/vscode/.gemini/trustedFolders.json,type=bind",
+    // Not hand-edited, but Antigravity writes to this at runtime (e.g. saving
+    // settings on first run) — read-only makes that fail with "Failed to
+    // save settings: atomic...", so unlike Gemini's own settings.json above,
+    // this one has to stay writable.
+    "source=${localEnv:HOME}${localEnv:USERPROFILE}/.gemini/antigravity-cli/settings.json,target=/home/vscode/.gemini/antigravity-cli/settings.json,type=bind",
     "source=${localEnv:HOME}${localEnv:USERPROFILE}/.gemini/antigravity-cli/antigravity-oauth-token,target=/home/vscode/.gemini/antigravity-cli/antigravity-oauth-token,type=bind"
   ],
   // Put the venv's bin dir on PATH for every shell (equivalent to `source .venv/bin/activate`
