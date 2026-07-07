@@ -28,11 +28,24 @@ services:
       - "1883"
 
   stub:
+    # Stable tag on purpose: without an explicit image name, compose tags
+    # each build after its (uuid-suffixed, per-test) project name — every
+    # e2e run would leak two never-reused image tags. Same reason the
+    # sidecar's fallback tag below is fixed.
+    image: pylon2mqtt-stub:e2e-local
     build:
       context: ..
       dockerfile: docker/Dockerfile.stub
 
   sidecar:
+    # E2E_SIDECAR_IMAGE lets CI inject the exact image built (and smoke-
+    # tested) by the docker-build job, so both e2e matrix legs assert
+    # against the same artifact instead of each rebuilding their own. When
+    # it's set, the test driver drops `--build` (see test_sidecar_e2e.py's
+    # _compose_up) and compose uses the image as-is. Unset (local runs),
+    # `up --build` rebuilds and tags the fallback name, so a dev never
+    # silently tests a stale image after editing sidecar code.
+    image: ${E2E_SIDECAR_IMAGE:-pylon2mqtt:e2e-local}
     build:
       context: ..
       dockerfile: docker/Dockerfile

@@ -47,7 +47,7 @@ jobs:
         # not a mandate to hit 100%. Scoped to custom_components + docker since
         # that's the shipped code; scripts/ (e2e-only helpers) is excluded.
         # No e2e here: the e2e suite runs against the *built* sidecar image,
-        # so it lives in the docker-build job, after the build.
+        # so it lives in the e2e job below, downstream of docker-build.
         run: >
           pytest --cov=custom_components --cov=docker
           --cov-report=term-missing --cov-fail-under=88
@@ -133,8 +133,8 @@ jobs:
             --build-arg SIDECAR_VERSION="ci-${{ github.sha }}" \
             -t pylon2mqtt:ci .
       - name: Smoke test the built image
-        # Cheap fail-fast before the e2e step below spins up the full compose
-        # stack: proves the image runs under its pinned Python 3.13 runtime
+        # Cheap fail-fast before the image is shipped off to the e2e job's
+        # compose stack: proves it runs under its pinned Python 3.13 runtime
         # (not just that `docker build` succeeds), that main.py's entry point
         # and its pinned deps (paho-mqtt, pyserial) import cleanly, and that
         # missing config fails fast (exit 1, clear log) instead of hanging
@@ -153,30 +153,23 @@ jobs:
             echo "::error::Expected fail-fast MQTT_BROKER validation message was not logged"
             exit 1
           fi
-      - uses: "astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39" # v8.2.0
+      - name: Save the image for the e2e job
+        # `docker save` + artifact (rather than each e2e matrix leg running
+        # its own `docker build`) so both legs assert against the *identical*
+        # bytes that were just built and smoke-tested here — a per-leg
+        # rebuild would technically be a different artifact, and would race
+        # ahead even when this job's smoke test failed.
+        run: docker save pylon2mqtt:ci | gzip > /tmp/pylon2mqtt-ci.tar.gz
+      - uses: "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a" # v7.0.1
         with:
-          python-version: "3.13"
-          activate-environment: true
-          cache-dependency-glob: requirements_dev.lock.txt
-      - name: Install dependencies (for the e2e suite)
-        run: uv pip install --require-hashes -r requirements_dev.lock.txt
-      - name: Run e2e tests against the built image
-        # Deliberately after (and only after) the image build: this brings up
-        # docker/docker-compose.test.yml — the just-built sidecar image, a
-        # containerized BMS stub, and a real Mosquitto broker — and asserts on
-        # what crosses the wire, so it gates on the shipped artifact
-        # (Dockerfile COPY list, pinned runtime and deps, non-root /data
-        # access, PID-1 SIGTERM) rather than on a dev-interpreter subprocess
-        # that can pass while the image is broken. The compose build reuses
-        # this job's earlier `docker build` layer cache. Also carries the
-        # real-timing e2e tests (test_integration/test_bms_connection), which
-        # consequently run on the current-HA lockfile only — they exercise
-        # this repo's own timing logic, not HA APIs, so the pytest matrix
-        # above isn't needed for them.
-        run: pytest -m e2e
+          name: sidecar-image
+          path: /tmp/pylon2mqtt-ci.tar.gz
+          # Only consumed by the e2e job minutes later; no reason to hold
+          # ~50 MB against the artifact quota for the default 90 days.
+          retention-days: 1
       - name: Scan image for known vulnerabilities
         # Report-only (exit-code 0), not a gate: a scan of the pinned base image
-        # alone (python:3.11.15-slim, see docker/Dockerfile) already turns up
+        # alone (python:3.13.14-slim, see docker/Dockerfile) already turns up
         # HIGH-severity CVEs in OS/vendored packages (e.g. perl-base,
         # jaraco.context) that this project can't fix by changing its own code
         # — only by the base image publisher patching upstream, same as the
@@ -201,3 +194,50 @@ jobs:
         with:
           name: sbom
           path: pylon2mqtt-sbom.spdx.json
+
+  e2e:
+    # Runs `pytest -m e2e` against the exact image docker-build produced
+    # (downloaded, not rebuilt — see that job's save step), on both ends of
+    # the supported HA range, mirroring the pytest job's matrix. The
+    # container tests themselves don't import HA, but the e2e marker also
+    # carries HA-dependent slow tests (e.g. test_integration's 16-module
+    # scale test), and the test driver's own dependencies (paho-mqtt et al.)
+    # differ between lockfiles — running both legs post-build keeps the
+    # coverage the old pre-build e2e had without giving up artifact fidelity.
+    name: "e2e (${{ matrix.ha-version }})"
+    runs-on: "ubuntu-latest"
+    needs: docker-build
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - ha-version: current
+            lockfile: requirements_dev.lock.txt
+          - ha-version: min
+            lockfile: requirements_dev_min.lock.txt
+    steps:
+      - uses: "actions/checkout@v4"
+      - uses: "actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c" # v8.0.1
+        with:
+          name: sidecar-image
+          path: /tmp
+      - name: Load the built sidecar image
+        run: docker load -i /tmp/pylon2mqtt-ci.tar.gz
+      - uses: "astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39" # v8.2.0
+        with:
+          python-version: "3.13"
+          activate-environment: true
+          cache-dependency-glob: ${{ matrix.lockfile }}
+      - name: Install dependencies (HA ${{ matrix.ha-version }})
+        run: uv pip install --require-hashes -r ${{ matrix.lockfile }}
+      - name: Run e2e tests against the built image
+        # E2E_SIDECAR_IMAGE makes the compose stack (docker/
+        # docker-compose.test.yml) run the loaded image as-is instead of
+        # rebuilding — asserting on the shipped artifact (Dockerfile COPY
+        # list, pinned runtime and deps, non-root /data access, PID-1
+        # SIGTERM) is the whole point of this job. The stub/broker images
+        # are test fixtures, not artifacts, so compose still builds/pulls
+        # those on the fly.
+        env:
+          E2E_SIDECAR_IMAGE: pylon2mqtt:ci
+        run: pytest -m e2e

@@ -26,6 +26,7 @@ docker job; run locally with `pytest -m e2e` (first run builds the images).
 """
 
 import json
+import os
 import shutil
 import socket
 import subprocess
@@ -115,8 +116,14 @@ def stack() -> Generator[tuple[str, str, int]]:
     (the same isolation policy as the unit suite's OS-assigned stub ports).
     """
     project = f"pylon-e2e-{uuid.uuid4().hex[:8]}"
+    # CI injects the docker-build job's saved image via E2E_SIDECAR_IMAGE so
+    # both e2e matrix legs test the identical artifact; --build would defeat
+    # that by rebuilding it here. Compose still auto-builds any *missing*
+    # image (the stub) on a plain `up`. Locally the variable is unset and
+    # --build keeps the sidecar image fresh after code edits.
+    build_args = () if os.environ.get("E2E_SIDECAR_IMAGE") else ("--build",)
     try:
-        _compose(project, "up", "--build", "--detach")
+        _compose(project, "up", *build_args, "--detach")
         port_line = _compose(project, "port", "mosquitto", "1883").stdout.strip()
         port = int(port_line.rsplit(":", 1)[1])
         yield project, _broker_host(port), port
