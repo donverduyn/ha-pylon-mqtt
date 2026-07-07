@@ -130,6 +130,18 @@
       "bat_btst": {
         "name": "Battery Temperature State"
       },
+      "bat_coul_status": {
+        "name": "Coulomb Status"
+      },
+      "bat_events": {
+        "name": "Battery Events"
+      },
+      "bat_power_events": {
+        "name": "Power Events"
+      },
+      "bat_sys_fault": {
+        "name": "System Fault"
+      },
       "sys_board_version": {
         "name": "Board Version"
       },

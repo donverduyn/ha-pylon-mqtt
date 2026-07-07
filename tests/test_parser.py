@@ -562,7 +562,6 @@ class TestStubProtocolParity:
 #   • except block in parse_pwr data loop  (corrupt row)
 #   • except: pass blocks in parse_info   (non-numeric values)
 #   • generate_time_command               (never called via stub)
-#   • PylontechSystem.battery_count       (property never accessed)
 # ===========================================================================
 class TestParsePwrEdgeCases:
     # --- _mV returns None for "-" placeholder in extended columns ---
@@ -795,22 +794,6 @@ class TestParseStatEdgeCases:
         system = PylontechSystem(0, 0, 0, 0, 0, 0, 0)
         PylontechParser.parse_stat("", system)
         assert system.cycles is None
-
-
-class TestStructs:
-    # --- PylontechSystem.battery_count property ---
-
-    def test_battery_count_empty(self):
-        system = PylontechSystem(0, 0, 0, 0, 0, 0, 0)
-        assert system.battery_count == 0
-
-    def test_battery_count_matches_list(self):
-        system = PylontechSystem(0, 0, 0, 0, 0, 0, 0)
-        system.batteries = [
-            PylontechBattery(1, 50.0, 3.0, 25.0, 85, "Charge", 150.0, 0.0),
-            PylontechBattery(2, 50.0, 3.0, 25.0, 84, "Charge", 150.0, 0.0),
-        ]
-        assert system.battery_count == 2
 
     def test_battery_dataclass_optional_fields_default_to_none(self):
         bat = PylontechBattery(1, 50.0, 3.0, 25.0, 85, "Charge", 150.0, 0.0)

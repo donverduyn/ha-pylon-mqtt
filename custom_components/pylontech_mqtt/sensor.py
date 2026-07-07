@@ -373,6 +373,29 @@ BATTERY_SENSORS: tuple[SensorEntityDescription, ...] = (
         translation_key="bat_btst",
         entity_category=EntityCategory.DIAGNOSTIC,
     ),
+    # --- Vertical 'pwr N' block detail (only populated at MONITORING_LEVEL
+    # medium/high; None on 'low', where only the aggregate 'pwr' table is
+    # walked and this per-battery detail is never fetched) ---
+    SensorEntityDescription(
+        key="coul_status",
+        translation_key="bat_coul_status",
+        entity_category=EntityCategory.DIAGNOSTIC,
+    ),
+    SensorEntityDescription(
+        key="bat_events",
+        translation_key="bat_events",
+        entity_category=EntityCategory.DIAGNOSTIC,
+    ),
+    SensorEntityDescription(
+        key="power_events",
+        translation_key="bat_power_events",
+        entity_category=EntityCategory.DIAGNOSTIC,
+    ),
+    SensorEntityDescription(
+        key="sys_fault",
+        translation_key="bat_sys_fault",
+        entity_category=EntityCategory.DIAGNOSTIC,
+    ),
 )
 
 # ---------------------------------------------------------------------------

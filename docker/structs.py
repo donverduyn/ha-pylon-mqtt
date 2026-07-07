@@ -98,7 +98,3 @@ class PylontechSystem:
     dsg_cap: int | None = None  # discharge capacity (mAh)
 
     batteries: list[PylontechBattery] = field(default_factory=list[PylontechBattery])
-
-    @property
-    def battery_count(self) -> int:
-        return len(self.batteries)

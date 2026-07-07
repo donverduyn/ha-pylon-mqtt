@@ -130,6 +130,18 @@
       "bat_btst": {
         "name": "Estat de Temperatura de la Bateria"
       },
+      "bat_coul_status": {
+        "name": "Estat de Coulomb"
+      },
+      "bat_events": {
+        "name": "Esdeveniments de la Bateria"
+      },
+      "bat_power_events": {
+        "name": "Esdeveniments de Potència"
+      },
+      "bat_sys_fault": {
+        "name": "Fallada del Sistema"
+      },
       "sys_board_version": {
         "name": "Versió de la Placa"
       },
