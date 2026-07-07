@@ -1,28 +1,35 @@
 name: Release
 
-# Runs for a version tag created by autorelease.yaml when a manifest.json
-# version bump — rc or final — lands on master, or pushed by hand (kept as
-# an escape hatch; the bump-PR flow is the normal path for both). The two
-# entry points exist because tags created with the built-in GITHUB_TOKEN
-# deliberately do not trigger other workflows — autorelease must call this
-# one directly (workflow_call, passing the tag as an input) rather than
-# relying on its just-created tag firing the push trigger below.
+# Pure publication — this workflow runs no tests. Every commit that can
+# reach master has already been through the full gauntlet on its PR (unit
+# suite, then image build + smoke test, then the e2e suite against that
+# image on both HA legs — see tests.yaml, whose jobs are ordered exactly
+# that way), so re-testing here would only re-verify what was verified
+# minutes earlier. What this workflow does own: baking the release version
+# into the image (SIDECAR_VERSION/GIT_SHA build args — see
+# docker/Dockerfile and docker/main.py's diagnostics fields), scanning and
+# SBOM-ing the artifact actually being shipped, pushing it to GHCR, and
+# publishing the GitHub Release. That pairing is what lets a user match a
+# specific HACS release with a specific, reproducible sidecar image.
 #
-# Builds the sidecar image with the tag baked in as SIDECAR_VERSION and the
-# triggering commit as GIT_SHA (see docker/Dockerfile's ARGs and
-# docker/main.py's diagnostics fields), e2e-gates that exact image, pushes
-# it to GHCR under that version, and publishes a matching GitHub Release —
-# this is what lets a user pair a specific HACS release with a specific,
-# reproducible sidecar image instead of both floating on an unversioned
-# "2.0.0" that every commit shares.
+# Two entry points, one input: called by autorelease.yaml when a
+# manifest.json version bump lands on master (the normal path for rc and
+# final alike), or dispatched by hand from the Actions tab as an escape
+# hatch. There is deliberately no tag-push trigger: the v<version> tag is
+# *created by this workflow's last step*, not consumed by its first, so a
+# failed run leaves no tag (and no image, and no release) behind — re-run
+# it or re-bump, nothing to clean up.
 on:
-  push:
-    tags:
-      - "v*.*.*"
   workflow_call:
     inputs:
       tag:
-        description: "The v-prefixed release tag to build and publish (must already exist)"
+        description: "The v-prefixed release tag to publish (created on success; must match manifest.json's version)"
+        required: true
+        type: string
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "The v-prefixed release tag to publish (created on success; must match manifest.json's version)"
         required: true
         type: string
 
@@ -35,13 +42,10 @@ jobs:
       contents: write
       packages: write
     steps:
+      # No ref override: under workflow_call this is the master push that
+      # bumped the version; under workflow_dispatch it's the head of the
+      # ref the dispatcher chose. The tag doesn't exist yet either way.
       - uses: "actions/checkout@v4"
-        with:
-          # On a tag push, inputs.tag is empty and this resolves to the tag
-          # ref itself; via workflow_call it pins the checkout to the tag
-          # the caller just created, so a master that has already moved on
-          # can't leak newer commits into the release build.
-          ref: ${{ inputs.tag || github.ref }}
 
       - name: Derive version from tag
         id: version
@@ -53,15 +57,14 @@ jobs:
         env:
           INPUT_TAG: ${{ inputs.tag }}
         run: |
-          tag="${INPUT_TAG:-$GITHUB_REF_NAME}"
-          version="${tag#v}"
+          version="${INPUT_TAG#v}"
           if [[ "${version}" == *-* ]]; then
             is_prerelease=true
           else
             is_prerelease=false
           fi
           {
-            echo "tag=${tag}"
+            echo "tag=${INPUT_TAG}"
             echo "version=${version}"
             echo "is_prerelease=${is_prerelease}"
           } >> "$GITHUB_OUTPUT"
@@ -90,12 +93,9 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # Build → e2e → push, in that order: the image is loaded into the local
-      # daemon (push: false) so the exact bytes that will be published get
-      # e2e-tested first, and a red e2e means nothing reaches the registry at
-      # all. Previously this step pushed directly, so a tagged release
-      # shipped an untested build — one that wasn't even the same artifact CI
-      # had e2e-tested on the merge commit.
+      # Loaded into the local daemon (push: false) so the scan and SBOM
+      # below describe the artifact before anything is published; the push
+      # step then ships these exact bytes rather than a second build.
       - uses: "docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a" # v7.3.0
         with:
           context: .
@@ -108,25 +108,36 @@ jobs:
           tags: |
             ghcr.io/${{ github.repository }}:${{ steps.version.outputs.version }}
 
-      - uses: "astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39" # v8.2.0
+      - name: Scan image for known vulnerabilities
+        # Report-only (exit-code 0), not a gate: a scan of the pinned base image
+        # alone (python:3.13.14-slim, see docker/Dockerfile) already turns up
+        # HIGH-severity CVEs in OS/vendored packages (e.g. perl-base,
+        # jaraco.context) that this project can't fix by changing its own code
+        # — only by the base image publisher patching upstream, same as the
+        # PYSEC-2026-* noise requirements_runtime.txt already keeps out of
+        # pip-audit. Failing the release on those would just make it
+        # permanently red for issues nobody here can act on; the table output
+        # gives visibility on exactly what ships. Runs here (per release)
+        # rather than per CI push, since only shipped artifacts matter.
+        uses: "aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25" # v0.36.0
         with:
-          python-version: "3.13"
-          activate-environment: true
-          cache-dependency-glob: requirements_dev.lock.txt
-      - name: Install dependencies (for the e2e gate)
-        run: uv pip install --require-hashes -r requirements_dev.lock.txt
-      - name: Run e2e against the release image (gate)
-        # Same harness as tests.yaml's e2e job: E2E_SIDECAR_IMAGE makes the
-        # compose stack (docker/docker-compose.test.yml) run the loaded
-        # release image as-is instead of rebuilding it.
-        env:
-          E2E_SIDECAR_IMAGE: ghcr.io/${{ github.repository }}:${{ steps.version.outputs.version }}
-        run: pytest -m e2e
+          image-ref: "ghcr.io/${{ github.repository }}:${{ steps.version.outputs.version }}"
+          format: "table"
+          severity: "CRITICAL,HIGH"
+          exit-code: "0"
+          ignore-unfixed: true
 
-      - name: Push the tested image
-        # Plain `docker push` of the already-loaded tag, not a second
-        # build-push-action pass: what lands in GHCR is byte-for-byte the
-        # image the e2e gate just ran, not a cache-assisted rebuild of it.
+      - name: Generate SBOM
+        # Attached to the GitHub Release below, so the inventory travels
+        # with the artifact it describes instead of expiring as a CI
+        # artifact of some unrelated run.
+        uses: "anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610" # v0.24.0
+        with:
+          image: "ghcr.io/${{ github.repository }}:${{ steps.version.outputs.version }}"
+          format: "spdx-json"
+          output-file: "pylon2mqtt-sbom.spdx.json"
+
+      - name: Push the image
         run: docker push "ghcr.io/${{ github.repository }}:${{ steps.version.outputs.version }}"
 
       # Separate, conditional step rather than a second line in the tags list
@@ -143,9 +154,12 @@ jobs:
 
       - uses: "softprops/action-gh-release@718ea10b132b3b2eba29c1007bb80653f286566b" # v3.0.1
         with:
-          # Explicit rather than inferred from the run's ref: under
-          # workflow_call the ref is the master push that triggered
-          # autorelease, not the tag being released.
+          # This is the step that mints the v<version> tag (at the commit
+          # this run checked out) — deliberately the pipeline's last act,
+          # so any earlier failure leaves no tag to clean up before
+          # retrying.
           tag_name: ${{ steps.version.outputs.tag }}
+          target_commitish: ${{ github.sha }}
           generate_release_notes: true
           prerelease: ${{ steps.version.outputs.is_prerelease }}
+          files: pylon2mqtt-sbom.spdx.json
