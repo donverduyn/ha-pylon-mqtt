@@ -101,17 +101,16 @@ chmod +x /home/vscode/.local/bin/opencode /home/vscode/.local/bin/kilo
 # silently drifts onto whatever's newest on PyPI (including newer Home Assistant
 # releases than CI tests against) while CI stays pinned.
 #
-# --python 3.13 is required, not a default: despite the "3-3.13-trixie" tag, the
-# base image's own build ships a second, newer Python (3.14 as of this writing)
-# at /usr/local/bin — not from apt (dpkg doesn't know it), installed independently
-# of the versioned apt package at /usr/bin/python3.13 the tag actually refers to.
-# uv prefers that /usr/local one when unpinned, so the venv silently ends up on
-# whatever that happens to be — and the lock file's pinned pydantic-core has no
-# 3.14 wheel yet, so --require-hashes fails to build it and installs an unpinned
-# newer one instead, same drift as above but for the interpreter and a dependency
-# at once. This must track the base image tag and CI's actions/setup-python
-# version above.
-uv venv --python 3.13 /home/vscode/.venv
+# --python 3.14 is required, not a default: despite the "3-3.14-trixie" tag, the
+# base image's own build has shipped a second Python at /usr/local/bin in the
+# past (not from apt — dpkg doesn't know it) alongside the versioned apt package
+# the tag actually refers to. uv prefers that /usr/local one when unpinned, so
+# the venv can silently end up on whatever that happens to be — and a lock
+# file's pinned pydantic-core with no wheel for it would then fail to build
+# under --require-hashes and install an unpinned newer one instead, same drift
+# as above but for the interpreter and a dependency at once. This must track
+# the base image tag and CI's actions/setup-python version above.
+uv venv --python 3.14 /home/vscode/.venv
 uv pip install --python /home/vscode/.venv/bin/python --require-hashes -r requirements_dev.lock.txt
 
 # containerEnv/remoteEnv set PATH for processes VS Code itself launches, but a login shell

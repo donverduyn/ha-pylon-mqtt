@@ -156,7 +156,7 @@ class TestSetNativeValue:
     ) -> None:
         """Setting a value must write the new capacity into battery_capacities."""
         n = _make_number(coordinator)
-        n.async_write_ha_state = MagicMock()
+        n.async_write_ha_state = MagicMock()  # pyright: ignore[reportAttributeAccessIssue]
         coordinator.async_request_refresh = AsyncMock()
 
         await n.async_set_native_value(7.2)
@@ -167,7 +167,7 @@ class TestSetNativeValue:
         self, coordinator: PylontechCoordinator
     ) -> None:
         n = _make_number(coordinator)
-        n.async_write_ha_state = MagicMock()
+        n.async_write_ha_state = MagicMock()  # pyright: ignore[reportAttributeAccessIssue]
         coordinator.async_request_refresh = AsyncMock()
 
         await n.async_set_native_value(5.5)
@@ -179,7 +179,7 @@ class TestSetNativeValue:
     ) -> None:
         n = _make_number(coordinator)
         write = MagicMock()
-        n.async_write_ha_state = write
+        n.async_write_ha_state = write  # pyright: ignore[reportAttributeAccessIssue]
         coordinator.async_request_refresh = AsyncMock()
 
         await n.async_set_native_value(3.0)
@@ -191,7 +191,7 @@ class TestSetNativeValue:
     ) -> None:
         """A refresh must be requested so energy_stored sensors update immediately."""
         n = _make_number(coordinator)
-        n.async_write_ha_state = MagicMock()
+        n.async_write_ha_state = MagicMock()  # pyright: ignore[reportAttributeAccessIssue]
         refresh = AsyncMock()
         coordinator.async_request_refresh = refresh
 
@@ -204,7 +204,7 @@ class TestSetNativeValue:
     ) -> None:
         """Capacity set via the number entity must be reflected in energy_stored."""
         n = _make_number(coordinator)
-        n.async_write_ha_state = MagicMock()
+        n.async_write_ha_state = MagicMock()  # pyright: ignore[reportAttributeAccessIssue]
         coordinator.async_request_refresh = AsyncMock()
 
         await n.async_set_native_value(6.0)

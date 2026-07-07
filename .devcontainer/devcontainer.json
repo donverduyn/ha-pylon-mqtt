@@ -6,7 +6,7 @@
   // requirements_dev.lock.txt's --python-version target — a devcontainer on
   // a different Python/HA combination than CI is exactly the drift that let
   // this repo declare HA 2024.11 as its minimum while never testing it.
-  "image": "mcr.microsoft.com/devcontainers/python:3-3.13-trixie",
+  "image": "mcr.microsoft.com/devcontainers/python:3-3.14-trixie",
   "features": {
     "ghcr.io/devcontainers-extra/features/ripgrep:1": {},
     "ghcr.io/devcontainers/features/github-cli:1": {},

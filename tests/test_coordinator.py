@@ -589,6 +589,43 @@ class TestStalenessWatchdog:
         # Device should be marked available regardless of whether data has arrived.
         assert coordinator.last_update_success is True
 
+    async def test_online_does_not_restore_availability_while_data_is_stale(
+        self, hass: HomeAssistant, coordinator: PylontechCoordinator
+    ) -> None:
+        """Once the watchdog has marked the device unavailable for staleness,
+        the sidecar's next periodic 'online' republish (sent every poll cycle
+        regardless of that cycle's own payload validity) must NOT flip
+        availability back on by itself — only a fresh, successfully
+        validated state payload may do that. Otherwise stale/rejected data
+        could repeatedly look "available" forever."""
+        coordinator._process_payload(_PAYLOAD)  # populate data, set the clock
+        coordinator._last_message_monotonic = (
+            time.monotonic() - coordinator._STALE_TIMEOUT_SECONDS - 1
+        )
+        coordinator._check_staleness(_FAKE_NOW)  # watchdog fires
+        assert coordinator.last_update_success is False
+
+        coordinator._on_message(
+            _FAKE_CLIENT, None, _msg("pylontech/stack/availability", "online")
+        )
+        await hass.async_block_till_done()
+        assert coordinator.last_update_success is False
+
+    async def test_online_restores_availability_once_fresh_data_arrives(
+        self, hass: HomeAssistant, coordinator: PylontechCoordinator
+    ) -> None:
+        """After a staleness-driven unavailable, a genuinely fresh valid state
+        payload (not just an 'online' republish) must restore availability."""
+        coordinator._process_payload(_PAYLOAD)
+        coordinator._last_message_monotonic = (
+            time.monotonic() - coordinator._STALE_TIMEOUT_SECONDS - 1
+        )
+        coordinator._check_staleness(_FAKE_NOW)
+        assert coordinator.last_update_success is False
+
+        coordinator._process_payload(_PAYLOAD)
+        assert coordinator.last_update_success is True
+
     async def test_unrecognised_avail_payload_marks_unavailable(
         self, hass: HomeAssistant, coordinator: PylontechCoordinator
     ) -> None:
@@ -798,3 +835,68 @@ class TestPayloadSchemaValidation:
         coordinator._process_payload(_PAYLOAD)
         assert coordinator.data is not None
         assert coordinator.data["voltage"] == 51.2
+
+    async def test_non_object_cell_is_rejected(
+        self, coordinator: PylontechCoordinator
+    ) -> None:
+        """A cells entry that isn't an object must be dropped before it can
+        reach is_cell_present/sensor.py, which call .get() on each cell and
+        would otherwise raise AttributeError on a bare string/number."""
+        coordinator._process_payload(
+            {**_PAYLOAD, "batteries": [{**_BAT1, "cells": ["not-an-object"]}]}
+        )
+        assert coordinator.data is None
+
+    async def test_cells_not_a_list_is_rejected(
+        self, coordinator: PylontechCoordinator
+    ) -> None:
+        coordinator._process_payload(
+            {**_PAYLOAD, "batteries": [{**_BAT1, "cells": {"cell_id": 0}}]}
+        )
+        assert coordinator.data is None
+
+    async def test_cell_missing_cell_id_is_rejected(
+        self, coordinator: PylontechCoordinator
+    ) -> None:
+        coordinator._process_payload(
+            {**_PAYLOAD, "batteries": [{**_BAT1, "cells": [{"voltage": 3.4}]}]}
+        )
+        assert coordinator.data is None
+
+    async def test_cell_non_int_cell_id_is_rejected(
+        self, coordinator: PylontechCoordinator
+    ) -> None:
+        coordinator._process_payload(
+            {**_PAYLOAD, "batteries": [{**_BAT1, "cells": [{"cell_id": "0"}]}]}
+        )
+        assert coordinator.data is None
+
+    async def test_duplicate_cell_id_is_rejected(
+        self, coordinator: PylontechCoordinator
+    ) -> None:
+        cell0 = {"cell_id": 0, "voltage": 3.4}
+        cell0_dup = {"cell_id": 0, "voltage": 3.5}
+        coordinator._process_payload(
+            {**_PAYLOAD, "batteries": [{**_BAT1, "cells": [cell0, cell0_dup]}]}
+        )
+        assert coordinator.data is None
+
+    async def test_too_many_cells_is_rejected(
+        self, coordinator: PylontechCoordinator
+    ) -> None:
+        """Guards against unbounded PylontechCellSensor entity creation in
+        sensor.py, which never removes entities once registered."""
+        cells = [{"cell_id": i, "voltage": 3.4} for i in range(33)]
+        coordinator._process_payload(
+            {**_PAYLOAD, "batteries": [{**_BAT1, "cells": cells}]}
+        )
+        assert coordinator.data is None
+
+    async def test_max_cells_is_accepted(
+        self, coordinator: PylontechCoordinator
+    ) -> None:
+        cells = [{"cell_id": i, "voltage": 3.4} for i in range(32)]
+        coordinator._process_payload(
+            {**_PAYLOAD, "batteries": [{**_BAT1, "cells": cells}]}
+        )
+        assert coordinator.data is not None

@@ -55,7 +55,14 @@ files = ["custom_components", "docker", "scripts"]
 # so without this, an explicit invocation re-scans tests/ and reintroduces
 # every problem `files` was scoped to avoid above.
 exclude = "^(\\.venv|tests|.*/__pycache__)/"
-python_version = "3.13"
+# Bumped from 3.13 in lockstep with requirements_dev.lock.txt's homeassistant
+# pin: HA's own source (which mypy parses directly, since it ships no
+# separate .pyi stubs) now uses Python 3.14-only grammar internally (e.g.
+# parenthesis-less multi-exception `except`), so mypy must be told 3.14 is
+# an allowed target just to parse it. This doesn't let *our* code use 3.14
+# syntax without also breaking under Python 3.13 — the "min" test lane still
+# runs the actual interpreter at 3.13 and would fail at import time first.
+python_version = "3.14"
 strict = true
 warn_unused_configs = true
 # custom_components/ has no __init__.py (standard for HA integrations), so
@@ -79,7 +86,8 @@ extraPaths = ["docker", "tests", "."]
 # invocation silently analyze whatever unrelated Python happened to be on
 # PATH instead of erroring, since CI and the devcontainer don't share a
 # filesystem layout. Pyright's own docs recommend against committing this.
-pythonVersion = "3.13"
+# See [tool.mypy]'s python_version above for why this is 3.14, not 3.13.
+pythonVersion = "3.14"
 # Home Assistant's Entity declares device_info/available/native_value etc. as
 # cached_property for performance, but computing them live via a plain
 # @property in a subclass (as this integration and virtually every HA

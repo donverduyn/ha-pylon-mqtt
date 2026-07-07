@@ -137,7 +137,7 @@ The sidecar publishes:
 ### Step 2 — Install the HA integration
 
 > [!NOTE]
-> Requires **Home Assistant 2025.3 or newer** — HA's own built-in `mqtt` component pins `paho-mqtt==1.6.1` on every release before 2025.3.0, which conflicts with this integration's `paho-mqtt>=2.0.0` requirement (needed for the `paho.mqtt.enums` module). It also needs the config entry reconfigure flow used by Step 3's Reconfigure option, available since 2024.11.
+> Requires **Home Assistant 2025.4 or newer** — HA's own built-in `mqtt` component pins `paho-mqtt==1.6.1` on every release before 2025.3.0, which conflicts with this integration's `paho-mqtt>=2.0.0` requirement (needed for the `paho.mqtt.enums` module). The entire 2025.3.x branch is itself uninstallable from scratch (it pins an `aiohttp` release since yanked from PyPI), so 2025.4.0 is the first version that actually works — see `hacs.json`. It also needs the config entry reconfigure flow used by Step 3's Reconfigure option, available since 2024.11.
 
 #### Via HACS (Recommended)
 

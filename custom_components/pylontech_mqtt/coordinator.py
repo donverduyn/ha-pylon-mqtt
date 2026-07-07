@@ -45,6 +45,14 @@ _REQUIRED_BATTERY_NUMERIC_FIELDS: dict[str, tuple[float | None, float | None]] =
     "soc": (0, 100),
     "power": (None, None),
 }
+# Real Pylontech modules top out around 15-16 cells; this caps well above
+# that (rather than matching it exactly) so real hardware is never rejected,
+# while still bounding how many PylontechCellSensor entities a single
+# battery's "cells" list can cause sensor.py to create — those entities are
+# never removed once registered (see the per-module/per-cell presence
+# comment below), so an unbounded or buggy publisher would otherwise leave
+# permanent junk entities behind.
+_MAX_CELLS_PER_BATTERY = 32
 
 
 def _validate_number(
@@ -108,6 +116,34 @@ def _validate_state_payload(payload: dict[str, Any]) -> str | None:
             error = _validate_number(bat[field], low, high)
             if error is not None:
                 return f"batteries[{i}].{field!r}: {error}"
+
+        if "cells" in bat:
+            cells = bat["cells"]
+            if not isinstance(cells, list):
+                return f"batteries[{i}].cells must be a list"
+            cells = cast(list[object], cells)
+            if len(cells) > _MAX_CELLS_PER_BATTERY:
+                return (
+                    f"batteries[{i}].cells has {len(cells)} entries, "
+                    f"exceeding the maximum of {_MAX_CELLS_PER_BATTERY}"
+                )
+            seen_cell_ids: set[int] = set()
+            for j, cell in enumerate(cells):
+                if not isinstance(cell, dict):
+                    return f"batteries[{i}].cells[{j}] must be an object"
+                cell = cast(dict[str, Any], cell)
+                cell_id = cell.get("cell_id")
+                if not isinstance(cell_id, int) or isinstance(cell_id, bool):
+                    return (
+                        f"batteries[{i}].cells[{j}].cell_id must be an int, "
+                        f"got {cell_id!r}"
+                    )
+                if cell_id in seen_cell_ids:
+                    return (
+                        f"batteries[{i}].cells[{j}].cell_id {cell_id!r} "
+                        "is a duplicate within this battery"
+                    )
+                seen_cell_ids.add(cell_id)
 
     return None
 
@@ -266,8 +302,21 @@ class PylontechCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 # Mark available immediately — do not gate on data being present.
                 # The "online" availability message can arrive before the first
                 # state payload; gating would cause the device to appear offline
-                # until the race resolves.
-                self.hass.loop.call_soon_threadsafe(self._mark_available)
+                # until the race resolves. But once the staleness watchdog has
+                # already judged the last valid payload too old, this periodic
+                # republish (main.py sends "online" every poll cycle regardless
+                # of that cycle's own payload validity) must not silently
+                # restore availability on its own — only a fresh, successfully
+                # validated state payload (which sets last_update_success via
+                # async_set_updated_data in _process_payload) should be able to
+                # clear a staleness-driven unavailable.
+                stale = (
+                    self._last_message_monotonic is not None
+                    and time.monotonic() - self._last_message_monotonic
+                    > self._STALE_TIMEOUT_SECONDS
+                )
+                if not stale:
+                    self.hass.loop.call_soon_threadsafe(self._mark_available)
             else:
                 self.hass.loop.call_soon_threadsafe(self._mark_unavailable)
             return

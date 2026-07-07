@@ -263,6 +263,47 @@ class TestEnergyTrackerPersistence:
         tracker2 = EnergyTracker(state_file=state_file)
         assert tracker2.energy_in == pytest.approx(1.0)
 
+    @pytest.mark.parametrize(
+        "energy_in, energy_out",
+        [
+            ("nan", 1.0),
+            (1.0, "nan"),
+            ("inf", 1.0),
+            ("-inf", 1.0),
+            (-5.0, 1.0),
+            (1.0, -5.0),
+        ],
+    )
+    def test_non_finite_or_negative_persisted_values_reset_to_zero(
+        self, tmp_path, caplog, energy_in, energy_out
+    ):
+        """A corrupt state file with NaN/inf/negative counters must not be
+        loaded as-is — HA's coordinator rejects such values forever, so a
+        poisoned file would otherwise permanently block all publishing
+        instead of just losing the persisted counters."""
+        import logging
+
+        state_file = str(tmp_path / "energy.json")
+        with open(state_file, "w") as f:
+            json.dump({"energy_in": energy_in, "energy_out": energy_out}, f)
+
+        with caplog.at_level(logging.WARNING):
+            tracker = EnergyTracker(state_file=state_file)
+
+        assert tracker.energy_in == 0.0
+        assert tracker.energy_out == 0.0
+        assert "Could not load energy state" in caplog.text
+
+    def test_zero_persisted_values_are_accepted(self, tmp_path):
+        """0.0 is a valid, finite, non-negative value and must load as-is."""
+        state_file = str(tmp_path / "energy.json")
+        with open(state_file, "w") as f:
+            json.dump({"energy_in": 0.0, "energy_out": 0.0}, f)
+
+        tracker = EnergyTracker(state_file=state_file)
+        assert tracker.energy_in == 0.0
+        assert tracker.energy_out == 0.0
+
     def test_save_is_atomic_no_stray_tmp_file_left_behind(self, tmp_path):
         """_save() writes to a sibling .tmp file and renames it into place —
         after a successful save, no leftover .tmp file should remain."""

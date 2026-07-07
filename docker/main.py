@@ -35,6 +35,7 @@ All configuration is via environment variables:
 
 import json
 import logging
+import math
 import os
 import signal
 import socket
@@ -188,9 +189,14 @@ class BmsConnection:
             s.settimeout(5)
             s.connect((TCP_HOST, TCP_PORT))
             self._tcp = s
-            # The console sends an unsolicited banner/prompt as soon as a
-            # client connects; drain it now so it can't be mistaken for part
-            # of the first real command's response.
+            # A real console sends an unsolicited banner/prompt as soon as a
+            # client connects, but a transparent serial-over-TCP bridge only
+            # forwards bytes — it won't print anything until prompted. Prime
+            # it with a blank line like the serial path below; any leftover
+            # bytes from a console's own unsolicited banner are harmless
+            # since _flush_stale_input() drains them before the first real
+            # command is sent.
+            s.sendall(b"\n")
             self._read_until_prompt()
         else:
             _LOGGER.info("Opening serial on %s @ %d baud", SERIAL_PORT, BAUD_RATE)
@@ -376,6 +382,22 @@ class EnergyTracker:
             # (e.g. missing one key) leaves both counters at 0.
             energy_in = float(data["energy_in"])
             energy_out = float(data["energy_out"])
+            # float() accepts "nan"/"inf" and negative numbers without
+            # raising, but the HA integration's coordinator rejects
+            # non-finite or negative energy_in/energy_out forever — so a
+            # corrupt value here would otherwise silently brick publishing
+            # until the file is manually fixed. Treat it the same as a
+            # missing/corrupt file instead: reset to 0.
+            if (
+                not math.isfinite(energy_in)
+                or not math.isfinite(energy_out)
+                or energy_in < 0
+                or energy_out < 0
+            ):
+                raise ValueError(
+                    f"energy_in={energy_in!r}, energy_out={energy_out!r} "
+                    "must be finite and non-negative"
+                )
             self.energy_in = energy_in
             self.energy_out = energy_out
             _LOGGER.info(
@@ -763,21 +785,25 @@ def main() -> None:
             if system is None:
                 system = PylontechSystem(0, 0, 0, 0, 0.0, 0.0, 0.0)
 
-            if "Power Volt" in raw_pwr:
+            pwr_parsed = "Power Volt" in raw_pwr
+            if pwr_parsed:
                 PylontechParser.parse_pwr(raw_pwr, system)
 
-            if not system.batteries:
+            if not system.batteries or not pwr_parsed:
                 # Either the aggregate table's header is missing entirely, or
                 # it's present but every data row failed to parse (wrong
                 # column count, corrupt firmware output, etc.) — parse_pwr
-                # resets system.batteries to [] in both cases. Either way,
-                # zero batteries here means the aggregate response can't be
-                # trusted, so fall back to probing each battery individually
-                # via "pwr N", which uses a completely different (vertical)
-                # response format — see PylontechParser.parse_pwr_indexed.
-                # This correctness fallback runs regardless of
-                # MONITORING_LEVEL — without it there would be zero battery
-                # data on such firmware at any detail level.
+                # resets system.batteries to [] in both cases. A response
+                # still missing "Power Volt" after the retry above means
+                # parse_pwr was skipped this iteration too, so system.batteries
+                # (and voltage/current/soc/power) may just be leftovers from
+                # the previous poll — always refall back to indexed probing in
+                # that case rather than silently republishing stale readings.
+                # "pwr N" uses a completely different (vertical) response
+                # format — see PylontechParser.parse_pwr_indexed. This
+                # correctness fallback runs regardless of MONITORING_LEVEL —
+                # without it there would be zero/stale battery data on such
+                # firmware at any detail level.
                 _LOGGER.warning(
                     "Aggregate 'pwr' response missing or yielded no valid "
                     "batteries — falling back to per-battery 'pwr N' polling"
