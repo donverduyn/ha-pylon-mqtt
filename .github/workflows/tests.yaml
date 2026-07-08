@@ -20,19 +20,25 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
-# Every job below is gated on the "skip-ci" PR label so a maintainer can
-# fast-track a merge (e.g. an environment-settings-only change) without
-# waiting on the full matrix. A skipped job still reports a "skipped"
-# conclusion for its required-status-check context, which branch
-# protection treats as satisfied — it does not disable branch protection
-# itself, so applying the label is the only way to bypass these checks.
-# The label is refused on release PRs (see detect-release below): a
-# version bump merged to master auto-releases via autorelease.yaml with
-# no further checks downstream, so that's the one PR shape that must
-# never skip CI. Each job's condition therefore reads "skip only if the
-# label is set AND this is confirmed not a release" — anything short of
-# an explicit is_release == 'false' (a failed/skipped detect job included)
-# fails closed to "run the checks".
+# Every real job below (pytest/lint/docker-build/meta-lint/e2e) is gated
+# on the "skip-ci" PR label so a maintainer can fast-track a merge (e.g.
+# an environment-settings-only change) without waiting on the full
+# matrix. A skipped job still reports a "skipped" conclusion for its
+# required-status-check context, which branch protection treats as
+# satisfied — it does not disable branch protection itself, so applying
+# the label is the only way to bypass these checks.
+# skip-ci on a release PR is refused, not silently ignored: a version
+# bump merged to master auto-releases via autorelease.yaml with no
+# further checks downstream, so that's the one PR shape that must never
+# skip CI, and it must fail loudly rather than quietly fall back to
+# running everything (which would look identical to a normal PR in the
+# checks list, easy to miss). So each real job's condition reads "skip
+# only if the label is set AND this is confirmed not a release";
+# anything else — no label, an unconfirmed verdict (detect-release itself
+# failed), or skip-ci on a *confirmed* release — still dispatches the
+# job. The confirmed-release case is caught by an explicit early bail
+# step (see detect-release and tests-status below), not by silently
+# running the real steps.
 # (The env context isn't available in job-level `if:`, so this condition
 # is duplicated on each job below rather than defined once.)
 
@@ -62,12 +68,26 @@ jobs:
           else
             echo "is_release=true" >> "$GITHUB_OUTPUT"
           fi
+      - name: Refuse skip-ci on a release PR
+        # Early, fast (~4s) signal only — this job's own pass/fail isn't
+        # a required status check, so tests-status below independently
+        # repeats this exact check and is what actually fails the PR.
+        if: steps.check.outputs.is_release == 'true' && contains(github.event.pull_request.labels.*.name, 'skip-ci')
+        run: |
+          echo "::error::skip-ci cannot be applied to a release PR (manifest.json version changed against the base branch) — remove the label so the normal checks run before this auto-releases."
+          exit 1
 
   pytest:
     name: "pytest (${{ matrix.ha-version }})"
     runs-on: "ubuntu-latest"
     needs: [detect-release]
-    if: "needs.detect-release.outputs.is_release != 'false' || !contains(github.event.pull_request.labels.*.name, 'skip-ci')"
+    # Skips only in the one legitimate case: skip-ci is set AND
+    # detect-release confirmed this is NOT a release. Every other
+    # combination — no label, an unconfirmed verdict, or skip-ci on a
+    # *confirmed* release — still dispatches this job. See the top-of-file
+    # comment and tests-status below for why a confirmed release doesn't
+    # just skip quietly.
+    if: "!contains(github.event.pull_request.labels.*.name, 'skip-ci') || needs.detect-release.outputs.is_release == ''"
     strategy:
       fail-fast: false
       matrix:
@@ -128,7 +148,8 @@ jobs:
   lint:
     runs-on: "ubuntu-latest"
     needs: [detect-release]
-    if: "needs.detect-release.outputs.is_release != 'false' || !contains(github.event.pull_request.labels.*.name, 'skip-ci')"
+    # See pytest's identical condition/comment above.
+    if: "!contains(github.event.pull_request.labels.*.name, 'skip-ci') || needs.detect-release.outputs.is_release == ''"
     steps:
       - uses: "actions/checkout@v4"
       - uses: "astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39" # v8.2.0
@@ -177,7 +198,8 @@ jobs:
     # block on/get confused with the `lint` job's Python-specific tools.
     runs-on: "ubuntu-latest"
     needs: [detect-release]
-    if: "needs.detect-release.outputs.is_release != 'false' || !contains(github.event.pull_request.labels.*.name, 'skip-ci')"
+    # See pytest's identical condition/comment above.
+    if: "!contains(github.event.pull_request.labels.*.name, 'skip-ci') || needs.detect-release.outputs.is_release == ''"
     steps:
       - uses: "actions/checkout@v4"
       - name: Install actionlint
@@ -221,7 +243,8 @@ jobs:
     # they live in release.yaml against the image actually being published.
     runs-on: "ubuntu-latest"
     needs: [detect-release]
-    if: "needs.detect-release.outputs.is_release != 'false' || !contains(github.event.pull_request.labels.*.name, 'skip-ci')"
+    # See pytest's identical condition/comment above.
+    if: "!contains(github.event.pull_request.labels.*.name, 'skip-ci') || needs.detect-release.outputs.is_release == ''"
     steps:
       - uses: "actions/checkout@v4"
       - name: Build the sidecar image
@@ -280,15 +303,15 @@ jobs:
     # Needs pytest explicitly, not just transitively through docker-build:
     # docker-build no longer depends on pytest (see that job's comment), so
     # without this a failing unit suite wouldn't stop e2e from running.
-    needs: [pytest, docker-build, detect-release]
+    needs: [pytest, docker-build]
     # Checks pytest/docker-build's own result rather than the bare
-    # success() shorthand: success() would require *every* listed need to
-    # succeed, but detect-release is intentionally skipped outside
-    # pull_request events (e.g. workflow_dispatch), which would make e2e
-    # wrongly skip too. When skip-ci legitimately skips pytest/docker-build
-    # (non-release PR), their result is "skipped" rather than "success",
-    # so this still correctly skips e2e in that case.
-    if: "needs.pytest.result == 'success' && needs.docker-build.result == 'success' && (needs.detect-release.outputs.is_release != 'false' || !contains(github.event.pull_request.labels.*.name, 'skip-ci'))"
+    # success() shorthand: pytest/docker-build's own conditions (above)
+    # already fully encode skip-ci's effect — whenever skip-ci legitimately
+    # skips them (non-release) or bails on them (a confirmed release; see
+    # tests-status below), their result is "skipped", not "success", so
+    # this alone still correctly skips e2e in every skip-ci case without
+    # needing its own copy of the skip-ci/detect-release logic.
+    if: "needs.pytest.result == 'success' && needs.docker-build.result == 'success'"
     strategy:
       fail-fast: false
       matrix:
@@ -339,23 +362,36 @@ jobs:
   tests-status:
     # Branch protection needs one fixed required-status-check context per
     # workflow (mirroring hacs.yaml/hassfest.yaml, which each only have one
-    # job and so already look like this for free). tests.yaml has five jobs,
-    # two of them matrixed (pytest, e2e) — a job-level skip never expands a
-    # matrix, so a skipped pytest/e2e never posts under
+    # job and so already look like this for free). tests.yaml has five real
+    # jobs, two of them matrixed (pytest, e2e) — a job-level skip never
+    # expands a matrix, so a skipped pytest/e2e never posts under
     # "pytest (current)"/"pytest (min)"/"e2e (current)"/"e2e (min)" (those
     # literal names only come into existence once the matrix actually
     # runs), which would leave a skip-ci PR permanently blocked waiting on
-    # names that never appear. This job runs unconditionally (always(), no
-    # skip-ci check of its own), does no real work, and just checks that
-    # every real job's result was success or skipped — needs.e2e.result
-    # (and pytest's) already collapses both matrix legs into one verdict
-    # automatically. Branch protection requires *this* single name instead
-    # of the seven individual ones above.
-    name: Tests
+    # names that never appear. No `name:` override here (unlike
+    # hacs.yaml/hassfest.yaml's jobs) so this doesn't display as "Tests /
+    # Tests" against the workflow's own name.
+    #
+    # Runs unconditionally (always()) so it still reports even when
+    # something upstream was skipped or failed, and does two things:
+    # first, an explicit bail — identical to detect-release's own step —
+    # for skip-ci on a *confirmed* release, since none of the five jobs
+    # above self-check that (they just skip quietly; see their shared
+    # comment), and this is branch protection's actual required context,
+    # so it's the one place that has to fail loudly. Second, once past
+    # that, confirms every real job's result was success or skipped —
+    # needs.e2e.result (and pytest's) already collapses both matrix legs
+    # into one verdict automatically. Branch protection requires *this*
+    # single name instead of the seven individual ones above.
     runs-on: "ubuntu-latest"
-    needs: [pytest, lint, docker-build, meta-lint, e2e]
+    needs: [detect-release, pytest, lint, docker-build, meta-lint, e2e]
     if: always()
     steps:
+      - name: Refuse skip-ci on a release PR
+        if: needs.detect-release.outputs.is_release == 'true' && contains(github.event.pull_request.labels.*.name, 'skip-ci')
+        run: |
+          echo "::error::skip-ci cannot be applied to a release PR — remove the label so this job runs normally before it auto-releases."
+          exit 1
       - name: Check all required jobs passed or were skipped
         run: |
           for r in "${{ needs.pytest.result }}" "${{ needs.lint.result }}" \
