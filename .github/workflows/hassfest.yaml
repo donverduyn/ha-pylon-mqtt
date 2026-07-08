@@ -6,7 +6,10 @@ on:
   # protection). The daily schedule catches drift from upstream HA core
   # (this action clones it live — see the validate job), independent of
   # any push here.
+  # types adds labeled/unlabeled to the opened/synchronize/reopened default
+  # — see tests.yaml's identical comment for why the skip-ci gate needs it.
   pull_request:
+    types: [opened, synchronize, reopened, labeled, unlabeled]
   schedule:
     - cron: '0 0 * * *'
   workflow_dispatch:

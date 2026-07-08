@@ -4,7 +4,14 @@ on:
   # No push:master trigger: master commits are already covered by the
   # pull_request run on the PR that merged them (required by branch
   # protection).
+  # types adds labeled/unlabeled to the opened/synchronize/reopened default:
+  # the skip-ci jobs below key off github.event.pull_request.labels, a
+  # snapshot frozen at whichever event triggered the run. Without this, a
+  # skip-ci label applied after the PR is already open doesn't get a new
+  # triggering event, so every already-dispatched run keeps evaluating
+  # against its stale, label-less snapshot and just runs normally.
   pull_request:
+    types: [opened, synchronize, reopened, labeled, unlabeled]
   workflow_dispatch:
 
 permissions: {}
