@@ -40,6 +40,7 @@ jobs:
     outputs:
       is_release: ${{ steps.check.outputs.is_release }}
       skip_ci: ${{ steps.labels.outputs.skip_ci }}
+      duplicate: ${{ steps.dedupe.outputs.duplicate }}
     steps:
       - uses: "actions/checkout@v4"
       - name: Compare manifest.json version against the PR base
@@ -80,6 +81,26 @@ jobs:
         run: |
           echo "::error::skip-ci cannot be applied to a release PR (manifest.json version changed against the base branch) — remove the label so the normal checks run before this auto-releases."
           exit 1
+      - name: Check for an earlier, still-running instance of this same commit
+        # See tests.yaml's identical step for why: `gh pr create --label`
+        # fires two separate PR events (opened, then labeled) for the same
+        # commit, each starting a full run of this workflow. Only an
+        # *in-progress* earlier run counts, not any earlier run ever — a
+        # labeled/unlabeled event arriving well after a previous run already
+        # completed still needs to run for real.
+        id: dedupe
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          sha="${{ github.event.pull_request.head.sha }}"
+          mine="${{ github.run_id }}"
+          earlier=$(gh api "repos/${{ github.repository }}/actions/runs?event=pull_request&head_sha=$sha&per_page=50" \
+            --jq "[.workflow_runs[] | select(.name == \"${{ github.workflow }}\") | select(.id < $mine) | select(.status != \"completed\")] | length")
+          if [ "$earlier" -gt 0 ]; then
+            echo "duplicate=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "duplicate=false" >> "$GITHUB_OUTPUT"
+          fi
 
   validate:
     runs-on: "ubuntu-latest"
@@ -92,7 +113,10 @@ jobs:
     # below; an unconfirmed verdict fails closed to running the real check;
     # !cancelled() backs this job off if this run itself gets superseded,
     # rather than racing to complete real work that's about to be discarded).
-    if: "!cancelled() && !(needs.detect-release.outputs.skip_ci == 'true' && needs.detect-release.outputs.is_release == 'false')"
+    # duplicate != true additionally no-ops the redundant twin of a
+    # `gh pr create --label`-style double-triggered run — see
+    # detect-release's dedupe step.
+    if: "!cancelled() && needs.detect-release.outputs.duplicate != 'true' && !(needs.detect-release.outputs.skip_ci == 'true' && needs.detect-release.outputs.is_release == 'false')"
     steps:
       - name: Refuse skip-ci on a release PR
         # Duplicates detect-release's identical step (which only gives an

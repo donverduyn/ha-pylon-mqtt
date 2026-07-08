@@ -62,6 +62,10 @@ concurrency:
 # running the real steps.
 # (The env context isn't available in job-level `if:`, so this condition
 # is duplicated on each job below rather than defined once.)
+# Each condition also carries "duplicate != true" — see detect-release's
+# dedupe step — so the redundant twin of a `gh pr create --label`-style
+# double-triggered run no-ops here instead of re-running the whole matrix
+# a second time for the exact same commit.
 
 jobs:
   detect-release:
@@ -76,6 +80,7 @@ jobs:
     outputs:
       is_release: ${{ steps.check.outputs.is_release }}
       skip_ci: ${{ steps.labels.outputs.skip_ci }}
+      duplicate: ${{ steps.dedupe.outputs.duplicate }}
     steps:
       - uses: "actions/checkout@v4"
       - name: Compare manifest.json version against the PR base
@@ -121,6 +126,33 @@ jobs:
         run: |
           echo "::error::skip-ci cannot be applied to a release PR (manifest.json version changed against the base branch) — remove the label so the normal checks run before this auto-releases."
           exit 1
+      - name: Check for an earlier, still-running instance of this same commit
+        # `gh pr create --label` fires two separate PR events for the same
+        # commit (opened, then labeled — GitHub has no atomic "create
+        # pre-labeled" mutation), each starting a full run of this workflow.
+        # Both would independently reach the same live skip-ci verdict above,
+        # so once one of them is already under way there's nothing left for
+        # a second, simultaneous run to usefully check — this lets it no-op
+        # instead of also running every job below. Only an *in-progress*
+        # earlier run counts, not any earlier run ever: a labeled/unlabeled
+        # event arriving well after a previous run already completed (the
+        # normal "apply skip-ci to unstick an already-finished PR" case)
+        # must still run for real, since it's the only thing left able to
+        # act on the label — that earlier run's completed status makes it
+        # invisible to the `!= "completed"` filter below.
+        id: dedupe
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          sha="${{ github.event.pull_request.head.sha }}"
+          mine="${{ github.run_id }}"
+          earlier=$(gh api "repos/${{ github.repository }}/actions/runs?event=pull_request&head_sha=$sha&per_page=50" \
+            --jq "[.workflow_runs[] | select(.name == \"${{ github.workflow }}\") | select(.id < $mine) | select(.status != \"completed\")] | length")
+          if [ "$earlier" -gt 0 ]; then
+            echo "duplicate=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "duplicate=false" >> "$GITHUB_OUTPUT"
+          fi
 
   pytest:
     name: "pytest (${{ matrix.ha-version }})"
@@ -147,7 +179,7 @@ jobs:
     # is already being torn down; !cancelled() correctly backs this job
     # off too instead of burning several minutes running pytest for real
     # just to have the result discarded a moment later.
-    if: "!cancelled() && (needs.detect-release.outputs.skip_ci != 'true' || needs.detect-release.outputs.is_release == '')"
+    if: "!cancelled() && needs.detect-release.outputs.duplicate != 'true' && (needs.detect-release.outputs.skip_ci != 'true' || needs.detect-release.outputs.is_release == '')"
     strategy:
       fail-fast: false
       matrix:
@@ -209,7 +241,7 @@ jobs:
     runs-on: "ubuntu-latest"
     needs: [detect-release]
     # See pytest's identical condition/comment above.
-    if: "!cancelled() && (needs.detect-release.outputs.skip_ci != 'true' || needs.detect-release.outputs.is_release == '')"
+    if: "!cancelled() && needs.detect-release.outputs.duplicate != 'true' && (needs.detect-release.outputs.skip_ci != 'true' || needs.detect-release.outputs.is_release == '')"
     steps:
       - uses: "actions/checkout@v4"
       - uses: "astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39" # v8.2.0
@@ -259,7 +291,7 @@ jobs:
     runs-on: "ubuntu-latest"
     needs: [detect-release]
     # See pytest's identical condition/comment above.
-    if: "!cancelled() && (needs.detect-release.outputs.skip_ci != 'true' || needs.detect-release.outputs.is_release == '')"
+    if: "!cancelled() && needs.detect-release.outputs.duplicate != 'true' && (needs.detect-release.outputs.skip_ci != 'true' || needs.detect-release.outputs.is_release == '')"
     steps:
       - uses: "actions/checkout@v4"
       - name: Install actionlint
@@ -304,7 +336,7 @@ jobs:
     runs-on: "ubuntu-latest"
     needs: [detect-release]
     # See pytest's identical condition/comment above.
-    if: "!cancelled() && (needs.detect-release.outputs.skip_ci != 'true' || needs.detect-release.outputs.is_release == '')"
+    if: "!cancelled() && needs.detect-release.outputs.duplicate != 'true' && (needs.detect-release.outputs.skip_ci != 'true' || needs.detect-release.outputs.is_release == '')"
     steps:
       - uses: "actions/checkout@v4"
       - name: Build the sidecar image
