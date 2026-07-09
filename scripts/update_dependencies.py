@@ -9,6 +9,8 @@ pins, and regenerates lock files in one visible git diff.
 from __future__ import annotations
 
 import argparse
+import calendar
+import datetime
 import hashlib
 import html.parser
 import json
@@ -24,6 +26,20 @@ DEVCONTAINER_DIR = ROOT / ".devcontainer"
 DEVCONTAINER_JSON = DEVCONTAINER_DIR / "devcontainer.json"
 DEVCONTAINER_LOCK_FILE = DEVCONTAINER_DIR / "devcontainer-lock.json"
 TOOL_VERSIONS_FILE = DEVCONTAINER_DIR / "tool-versions.env"
+
+HACS_JSON = ROOT / "hacs.json"
+REQUIREMENTS_DEV_MIN_TXT = ROOT / "requirements_dev_min.txt"
+REQUIREMENTS_DEV_MIN_LOCK = ROOT / "requirements_dev_min.lock.txt"
+TESTS_WORKFLOW = ROOT / ".github" / "workflows" / "tests.yaml"
+
+# Decided 2026-07-09: trail the current HA release by ~2 release cycles
+# before dropping support for anything older. See requirements_dev_min.txt
+# for the mechanism this drives.
+MIN_HA_VERSION_MONTHS_BEHIND = 6
+# How many pytest-homeassistant-custom-component releases to walk forward
+# (never backward) past the months-behind target looking for one whose
+# dependency set actually resolves, before giving up and failing loudly.
+MIN_HA_VERSION_MAX_ATTEMPTS = 12
 
 NPM_VERSION_PINS: OrderedDict[str, str] = OrderedDict(
     [
@@ -472,22 +488,201 @@ def refresh_python_locks() -> None:
         compile_python_lock(requirements, output, python_version)
 
 
+def months_ago(months: int) -> str:
+    today = datetime.date.today()
+    total_months = today.year * 12 + (today.month - 1) - months
+    year, month0 = divmod(total_months, 12)
+    day = min(today.day, calendar.monthrange(year, month0 + 1)[1])
+    return datetime.date(year, month0 + 1, day).isoformat()
+
+
+def phacc_releases_sorted() -> list[tuple[str, str]]:
+    data = fetch_json(
+        "https://pypi.org/pypi/pytest-homeassistant-custom-component/json"
+    )
+    releases = cast(dict[str, list[dict[str, Any]]], data["releases"])
+    items: list[tuple[str, str]] = []
+    for version, files in releases.items():
+        if not files or any(f.get("yanked") for f in files):
+            continue
+        items.append((version, str(files[0]["upload_time"])[:10]))
+    items.sort(key=lambda item: item[1])
+    return items
+
+
+def homeassistant_pin_for_phacc(version: str) -> str:
+    data = fetch_json(
+        f"https://pypi.org/pypi/pytest-homeassistant-custom-component/{version}/json"
+    )
+    info = cast(dict[str, Any], data["info"])
+    for requirement in cast(list[str], info["requires_dist"] or []):
+        if requirement.startswith("homeassistant=="):
+            return requirement.split("==", 1)[1].split(";")[0].strip()
+    raise SystemExit(
+        f"pytest-homeassistant-custom-component=={version} has no exact "
+        "homeassistant== pin"
+    )
+
+
+def homeassistant_requires_python(version: str) -> str:
+    """Return the full >=X.Y.Z floor, e.g. "3.13.2" (not just "3.13").
+
+    `uv pip compile --python-version` treats a bare "3.13" as the *lowest*
+    3.13 patch, which then conflicts with any release whose actual floor is
+    a later patch (e.g. homeassistant requiring >=3.13.2) — the full floor
+    is needed here even though tests.yaml's matrix only wants major.minor
+    (see major_minor_python below), because astral-sh/setup-uv resolves a
+    bare "3.13" there to the *latest* matching patch, which always satisfies
+    any 3.13.x floor.
+    """
+    data = fetch_json(f"https://pypi.org/pypi/homeassistant/{version}/json")
+    info = cast(dict[str, Any], data["info"])
+    requires_python = str(info["requires_python"] or "")
+    match = re.search(r"(\d+)\.(\d+)(?:\.(\d+))?", requires_python)
+    if not match:
+        raise SystemExit(
+            f"homeassistant=={version} has no parseable requires_python "
+            f"({requires_python!r})"
+        )
+    major, minor, patch = match.group(1), match.group(2), match.group(3) or "0"
+    return f"{major}.{minor}.{patch}"
+
+
+def major_minor_python(version: str) -> str:
+    match = re.match(r"(\d+)\.(\d+)", version)
+    if not match:
+        raise SystemExit(f"not a major.minor(.patch) Python version: {version!r}")
+    return f"{match.group(1)}.{match.group(2)}"
+
+
+def write_min_requirements_pin(phacc_version: str) -> None:
+    text = REQUIREMENTS_DEV_MIN_TXT.read_text()
+    new_text = re.sub(
+        r"pytest-homeassistant-custom-component==\S+",
+        f"pytest-homeassistant-custom-component=={phacc_version}",
+        text,
+        count=1,
+    )
+    if new_text == text:
+        raise SystemExit(
+            f"could not find a pytest-homeassistant-custom-component== pin in "
+            f"{REQUIREMENTS_DEV_MIN_TXT}"
+        )
+    REQUIREMENTS_DEV_MIN_TXT.write_text(new_text)
+
+
+def try_compile_min_lock(phacc_version: str, python_version: str) -> bool:
+    write_min_requirements_pin(phacc_version)
+    try:
+        subprocess.run(
+            [
+                "uv",
+                "pip",
+                "compile",
+                "--quiet",
+                str(REQUIREMENTS_DEV_MIN_TXT),
+                "--generate-hashes",
+                "--python-version",
+                python_version,
+                "-o",
+                str(REQUIREMENTS_DEV_MIN_LOCK),
+            ],
+            cwd=ROOT,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        return True
+    except subprocess.CalledProcessError as err:
+        output = err.stderr or err.stdout or str(err)
+        reason = output.strip().splitlines()[-1] if output.strip() else str(err)
+        print(f"  {phacc_version} did not resolve: {reason}")
+        return False
+
+
+def update_hacs_json(ha_version: str) -> None:
+    text = HACS_JSON.read_text()
+    new_text = re.sub(
+        r'"homeassistant":\s*"[^"]+"', f'"homeassistant": "{ha_version}"', text, count=1
+    )
+    if new_text == text:
+        raise SystemExit(f'could not find a "homeassistant" field in {HACS_JSON}')
+    HACS_JSON.write_text(new_text)
+
+
+def update_tests_workflow_min_python(python_version: str) -> None:
+    text = TESTS_WORKFLOW.read_text()
+    pattern = re.compile(
+        r"(- ha-version: min\n\s*lockfile: requirements_dev_min\.lock\.txt\n"
+        r"\s*python-version: )\"[^\"]+\""
+    )
+    new_text, count = pattern.subn(
+        lambda m: f'{m.group(1)}"{python_version}"', text, count=1
+    )
+    if count == 0:
+        raise SystemExit(
+            f"could not find the ha-version: min matrix entry in {TESTS_WORKFLOW}"
+        )
+    TESTS_WORKFLOW.write_text(new_text)
+
+
+def refresh_min_ha_version() -> None:
+    cutoff = months_ago(MIN_HA_VERSION_MONTHS_BEHIND)
+    releases = phacc_releases_sorted()
+    candidate_indices = [i for i, (_, day) in enumerate(releases) if day <= cutoff]
+    if not candidate_indices:
+        raise SystemExit(
+            f"no pytest-homeassistant-custom-component release found on/before {cutoff}"
+        )
+    start = candidate_indices[-1]
+
+    attempts = releases[start : start + MIN_HA_VERSION_MAX_ATTEMPTS]
+    for phacc_version, _ in attempts:
+        ha_version = homeassistant_pin_for_phacc(phacc_version)
+        python_floor = homeassistant_requires_python(ha_version)
+        print(
+            f"trying pytest-homeassistant-custom-component=={phacc_version} "
+            f"(homeassistant=={ha_version}, python>={python_floor})"
+        )
+        if try_compile_min_lock(phacc_version, python_floor):
+            update_hacs_json(ha_version)
+            update_tests_workflow_min_python(major_minor_python(python_floor))
+            print(
+                f"minimum supported HA version -> {ha_version} "
+                f"(pytest-homeassistant-custom-component=={phacc_version})"
+            )
+            return
+
+    raise SystemExit(
+        f"none of {len(attempts)} pytest-homeassistant-custom-component releases from "
+        f"{attempts[0][0]} onward resolved cleanly — needs manual investigation"
+    )
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument(
+    group = parser.add_mutually_exclusive_group()
+    group.add_argument(
         "--devcontainer-only",
         action="store_true",
         help="refresh only devcontainer feature/tool pins",
     )
-    parser.add_argument(
+    group.add_argument(
         "--python-locks-only",
         action="store_true",
         help="refresh only Python requirement lock files",
     )
-    args = parser.parse_args()
-    if args.devcontainer_only and args.python_locks_only:
-        parser.error("choose at most one of --devcontainer-only/--python-locks-only")
-    return args
+    group.add_argument(
+        "--min-ha-version-only",
+        action="store_true",
+        help=(
+            "refresh only the minimum supported HA version (hacs.json, "
+            "requirements_dev_min.txt/.lock.txt, tests.yaml's min python-version) "
+            "— not part of the default run; has its own schedule/PR since it's "
+            "never auto-merged"
+        ),
+    )
+    return parser.parse_args()
 
 
 def main() -> int:
@@ -495,6 +690,11 @@ def main() -> int:
         raise SystemExit("run from a checkout containing .devcontainer")
 
     args = parse_args()
+    if args.min_ha_version_only:
+        refresh_min_ha_version()
+        print("updated minimum supported HA version")
+        return 0
+
     if not args.python_locks_only:
         refresh_devcontainer_dependencies()
     if not args.devcontainer_only:
