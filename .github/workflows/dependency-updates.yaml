@@ -70,3 +70,10 @@ jobs:
               --title "Update dependency pins" \
               --body "$PR_BODY"
           fi
+
+          # Requires UPDATE_PR_TOKEN (see checkout step above): pushes made
+          # with the default GITHUB_TOKEN don't trigger pull_request-based
+          # checks, so the required "HACS Action"/"validate"/"tests-finished"
+          # contexts would never run and this PR could never satisfy branch
+          # protection to auto-merge.
+          gh pr merge "$BRANCH" --auto --squash
