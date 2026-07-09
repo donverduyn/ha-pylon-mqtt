@@ -125,30 +125,40 @@
   // ("$home/.devcontainer-agent-sync$PWD"), since one runs in a JSON string
   // and the other in a shell script.
   "mounts": [
+    // Every source/target below ends in a trailing slash, deliberately:
+    // it's the explicit signal seedHostConfig.sh's is_declared_dir_mount()
+    // parses for (see that script) to know this is a directory mount, not
+    // an inference from "it happens to appear in this array at all" --
+    // Docker itself normalizes the trailing slash away transparently
+    // (confirmed empirically: identical daemon error text with and without
+    // it against the same nonexistent path), so this changes nothing about
+    // how the mount actually behaves, only what a parser reading this file
+    // can rely on.
+    //
     // Staging directory for .claude.json, the one path in
     // config-files.txt that isn't bind-mounted directly (see the
     // "initializeCommand" comment above for why).
-    "source=${localEnv:HOME}${localEnv:USERPROFILE}/.devcontainer-agent-sync${localWorkspaceFolder},target=/home/vscode/.agent-sync,type=bind",
+    "source=${localEnv:HOME}${localEnv:USERPROFILE}/.devcontainer-agent-sync${localWorkspaceFolder}/,target=/home/vscode/.agent-sync/,type=bind",
     // Everything else in config-files.txt: a live, read-write,
     // whole-directory bind mount straight from this project's own backup
     // onto the tool's real container path. No copying, no polling — see
     // the "initializeCommand" comment above.
-    "source=${localEnv:HOME}${localEnv:USERPROFILE}/.devcontainer-agent-sync${localWorkspaceFolder}/.claude,target=/home/vscode/.claude,type=bind",
-    "source=${localEnv:HOME}${localEnv:USERPROFILE}/.devcontainer-agent-sync${localWorkspaceFolder}/.codex,target=/home/vscode/.codex,type=bind",
-    "source=${localEnv:HOME}${localEnv:USERPROFILE}/.devcontainer-agent-sync${localWorkspaceFolder}/.gemini,target=/home/vscode/.gemini,type=bind",
-    "source=${localEnv:HOME}${localEnv:USERPROFILE}/.devcontainer-agent-sync${localWorkspaceFolder}/.config/opencode,target=/home/vscode/.config/opencode,type=bind",
-    "source=${localEnv:HOME}${localEnv:USERPROFILE}/.devcontainer-agent-sync${localWorkspaceFolder}/.local/share/opencode,target=/home/vscode/.local/share/opencode,type=bind",
-    "source=${localEnv:HOME}${localEnv:USERPROFILE}/.devcontainer-agent-sync${localWorkspaceFolder}/.local/state/opencode,target=/home/vscode/.local/state/opencode,type=bind",
-    "source=${localEnv:HOME}${localEnv:USERPROFILE}/.devcontainer-agent-sync${localWorkspaceFolder}/.config/kilo,target=/home/vscode/.config/kilo,type=bind",
-    "source=${localEnv:HOME}${localEnv:USERPROFILE}/.devcontainer-agent-sync${localWorkspaceFolder}/.local/share/kilo,target=/home/vscode/.local/share/kilo,type=bind",
-    "source=${localEnv:HOME}${localEnv:USERPROFILE}/.devcontainer-agent-sync${localWorkspaceFolder}/.local/state/kilo,target=/home/vscode/.local/state/kilo,type=bind",
-    "source=${localEnv:HOME}${localEnv:USERPROFILE}/.devcontainer-agent-sync${localWorkspaceFolder}/.config/gh,target=/home/vscode/.config/gh,type=bind",
+    "source=${localEnv:HOME}${localEnv:USERPROFILE}/.devcontainer-agent-sync${localWorkspaceFolder}/.claude/,target=/home/vscode/.claude/,type=bind",
+    "source=${localEnv:HOME}${localEnv:USERPROFILE}/.devcontainer-agent-sync${localWorkspaceFolder}/.codex/,target=/home/vscode/.codex/,type=bind",
+    "source=${localEnv:HOME}${localEnv:USERPROFILE}/.devcontainer-agent-sync${localWorkspaceFolder}/.gemini/,target=/home/vscode/.gemini/,type=bind",
+    "source=${localEnv:HOME}${localEnv:USERPROFILE}/.devcontainer-agent-sync${localWorkspaceFolder}/.config/opencode/,target=/home/vscode/.config/opencode/,type=bind",
+    "source=${localEnv:HOME}${localEnv:USERPROFILE}/.devcontainer-agent-sync${localWorkspaceFolder}/.local/share/opencode/,target=/home/vscode/.local/share/opencode/,type=bind",
+    "source=${localEnv:HOME}${localEnv:USERPROFILE}/.devcontainer-agent-sync${localWorkspaceFolder}/.local/state/opencode/,target=/home/vscode/.local/state/opencode/,type=bind",
+    "source=${localEnv:HOME}${localEnv:USERPROFILE}/.devcontainer-agent-sync${localWorkspaceFolder}/.config/kilo/,target=/home/vscode/.config/kilo/,type=bind",
+    "source=${localEnv:HOME}${localEnv:USERPROFILE}/.devcontainer-agent-sync${localWorkspaceFolder}/.local/share/kilo/,target=/home/vscode/.local/share/kilo/,type=bind",
+    "source=${localEnv:HOME}${localEnv:USERPROFILE}/.devcontainer-agent-sync${localWorkspaceFolder}/.local/state/kilo/,target=/home/vscode/.local/state/kilo/,type=bind",
+    "source=${localEnv:HOME}${localEnv:USERPROFILE}/.devcontainer-agent-sync${localWorkspaceFolder}/.config/gh/,target=/home/vscode/.config/gh/,type=bind",
     // GitHub Copilot CLI: its login lives inside session-store.db (SQLite)
     // alongside everything else it stores, so auth can't be isolated to a
     // single file here either — same whole-directory treatment as the rest
     // above, now scoped per-project like everything else instead of one
     // mount shared globally across every project and the host.
-    "source=${localEnv:HOME}${localEnv:USERPROFILE}/.devcontainer-agent-sync${localWorkspaceFolder}/.copilot,target=/home/vscode/.copilot,type=bind",
+    "source=${localEnv:HOME}${localEnv:USERPROFILE}/.devcontainer-agent-sync${localWorkspaceFolder}/.copilot/,target=/home/vscode/.copilot/,type=bind",
     // VS Code Local History lives under the remote server's user-data tree,
     // which is otherwise part of the container overlay and disappears when
     // the devcontainer is rebuilt. The mount target deliberately is NOT a

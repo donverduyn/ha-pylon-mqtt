@@ -36,67 +36,13 @@ script_dir=$(dirname "$0")
 # sudo mkdir -p "$HOME/.vscode-server/data/User/History"
 # sudo chown -R vscode:vscode "$HOME/.vscode-server/data/User/History"
 
-full_ownership_walk() {
-  walk_relpath=$1
-  # -prune on .git: git marks pack files read-only (mode 444), and on
-  # Docker Desktop for Mac, bind-mount chown is proxied back to the host
-  # filesystem, where changing ownership of a read-only file reliably
-  # fails with "Permission denied" even under sudo in the container —
-  # confirmed in practice for claude-plugins-official's .git/objects/pack
-  # (a marketplace plugin cloned by Claude Code itself). Skipping .git
-  # entirely avoids the failure outright instead of swallowing it after
-  # the fact: nothing needs to change ownership of a git repo's internals
-  # anyway, since mode 444 is already world-readable (vscode can read
-  # these files regardless of who owns them) and nothing here writes to
-  # an already-packed git object. `|| true` still guards the remaining
-  # walk in case some other unrelated file trips the same fakeowner
-  # quirk.
-  #
-  # chown -h: without -h, chown dereferences symlinks and chowns their
-  # *target* instead of the link itself. Codex leaves dangling sandbox
-  # symlinks behind under .codex/tmp/** (applypatch, apply_patch,
-  # codex-execve-wrapper) whose targets it has already cleaned up by the
-  # time this runs, so a target-following chown fails with "cannot
-  # dereference ... No such file or directory" for each one (confirmed in
-  # practice). -h fixes the symlink's own ownership instead, which always
-  # exists, sidestepping the dangling-target case entirely.
-  sudo find "$HOME/$walk_relpath" \( -name .git -prune \) -o -exec chown -h vscode:vscode {} + || true
-}
-
-
-prepare_config_dir() {
-  config_relpath=$1
-  sudo mkdir -p "$HOME/$config_relpath" || return $?
-
-  # seedHostConfig.sh drops this marker (inside the seeded tree itself, so it
-  # rides the same bind mount into the container) the one time it populates
-  # a "dir" config path fresh from the host. That's the only moment content
-  # with a foreign (host) UID can exist here, so it's the only moment a
-  # chown is needed: this mount is `fakeowner`-typed (Docker Desktop for
-  # Mac's VM-level bind mount) -- a file nobody has ever explicitly chowned
-  # shows each caller as its own owner by default, and an explicit chown
-  # persists as real, caller-independent ownership from then on. Once this
-  # walk has run, everything already present is really vscode-owned, and
-  # everything written after this point is created by the vscode process
-  # itself inside the container, so it's vscode-owned from birth regardless
-  # -- there's nothing left for a later rebuild to fix, named-file or not.
-  fresh_marker="$HOME/$config_relpath/.devcontainer-freshly-seeded"
-  if [ -e "$fresh_marker" ]; then
-    full_ownership_walk "$config_relpath"
-    sudo rm -f "$fresh_marker"
-  fi
-}
-
-copy_staged_json_config() {
-  json_relpath=$1
-  json_src="$HOME/.agent-sync/$json_relpath"
-  json_dest="$HOME/$json_relpath"
-  if [ ! -f "$json_src" ]; then
-    return 0
-  fi
-  mkdir -p "$(dirname "$json_dest")" || return $?
-  cp -p "$json_src" "$json_dest"
-}
+# is_bind_mounted/full_ownership_walk/default_content_for_relpath/
+# write_placeholder/sync_config_in live in lib/sync-config-in.sh, not here
+# -- kept sourceable on their own so tests can exercise them directly
+# without triggering this script's own top-level installs/downloads/sudo
+# calls (see that file).
+# shellcheck disable=SC1091 # path is repo-local and always present
+. "$(dirname "$0")/lib/sync-config-in.sh"
 
 tool_versions_file="$script_dir/tool-versions.env"
 
@@ -123,43 +69,36 @@ fi
 # rm -rf "$HOME/.vscode-server/data/User/History"
 # ln -s "$HOME/.local-history-sync" "$HOME/.vscode-server/data/User/History"
 
-# Every "dir"-kind path in config-files.txt is its own live bind mount
-# straight onto its real container path (see devcontainer.json's "mounts"),
-# so there's nothing to copy in for those — the mount already *is* the real
+# Most paths in config-files.txt are their own live bind mount straight
+# onto their real container path (see devcontainer.json's "mounts"), so
+# there's nothing to copy in for those — the mount already *is* the real
 # path. Docker still auto-creates each one as root before this script runs,
-# same as .agent-sync above, so ownership needs fixing regardless. The one
-# "json"-kind path (.claude.json) isn't mounted at all — copy it in from
-# the staging mount instead.
-while IFS='|' read -r relpath kind; do
+# same as .agent-sync above, so ownership needs fixing regardless. Which
+# paths those are is checked live via sync_config_in's is_bind_mounted,
+# not read from this file — see config-files.txt's header for why.
+while IFS= read -r relpath; do
   case "$relpath" in
     ''|'#'*) continue ;;
   esac
-  case "$kind" in
-    dir)
-      prepare_config_dir "$relpath"
-      ;;
-    json)
-      copy_staged_json_config "$relpath"
-      ;;
-  esac
+  sync_config_in "$relpath"
 done < "$script_dir/config-files.txt"
 
 # Start the sync-out watcher only now, after the copy-in loop above has run
-# copy_staged_json_config for .claude.json -- not "as early as possible" like
-# a prior version of this script did. The claude-code feature's own install
-# step writes a default, logged-out ~/.claude.json into the image itself
-# (confirmed in practice: `docker run --rm <this image> stat
-# /home/vscode/.claude.json` shows it present with a build-time mtime, before
-# any postCreate.sh code ever runs), and that placeholder is baked into a
-# cached image layer, so it's present again on every rebuild that reuses the
-# cache. Backgrounding the watcher any earlier than this raced its own
-# one-time catch-up sync (syncConfigOut.sh's sync_all_json) against the
-# copy-in loop above: whichever won decided whether the host's real,
-# previously-synced .claude.json survived the rebuild or got overwritten by
-# the image's logged-out placeholder -- confirmed in practice, this is what
-# was silently discarding logins on rebuild. Now the container's
-# ~/.claude.json is already the real, restored copy by the time the watcher
-# takes its first look, so there's nothing stale left for it to push out.
+# sync_config_in for every path in config-files.txt -- not "as early as
+# possible" like a prior version of this script did. Any of those paths can
+# ship a default placeholder baked into the image itself (the claude-code
+# feature's own install step does this for .claude.json -- confirmed in
+# practice: `docker run --rm <this image> stat /home/vscode/.claude.json`
+# shows it present with a build-time mtime, before any postCreate.sh code
+# ever runs -- and it's present again on every rebuild that reuses that
+# cached image layer). Backgrounding the watcher any earlier than this
+# raced its own one-time startup catch-up against the copy-in loop above:
+# whichever won decided whether the host's real, previously-synced content
+# survived the rebuild or got overwritten by the image's placeholder --
+# confirmed in practice, this is what was silently discarding logins on
+# rebuild. Now every unmounted path is already the real, restored copy by
+# the time the watcher takes its first look, so there's nothing stale left
+# for it to push out.
 #
 # Still runs before the slower, more failure-prone steps below (actionlint/
 # hadolint downloads, pnpm/uv installs): if any of those fail, postStartCommand

@@ -1,42 +1,44 @@
 # Single source of truth for every AI CLI config path that needs to survive
 # a container rebuild, read by three scripts (host-side seedHostConfig.sh,
 # container-side postCreate.sh and syncConfigOut.sh) so the list is never
-# duplicated. Format: "<path
-# relative to $HOME>|<kind>", where kind is:
-#   dir   - a whole directory, bind-mounted read-write directly from this
-#           project's backup onto the container's real path for it (see
-#           devcontainer.json's "mounts"). Seeded once, ever, from whatever
-#           the host has at that path; after that the mount itself is the
-#           only copy anyone reads or writes -- no copying, no polling.
-#   json  - a bare file, not inside its own directory, so it can't be
-#           bind-mounted the same way (see seedHostConfig.sh for why).
-#           Still handled the old file-by-file way: seeded once as {} if
-#           the host doesn't have one, copied into the container by
-#           postCreate.sh, and polled back out by syncConfigOut.sh.
+# duplicated. One path per line, relative to $HOME.
+#
+# Whether a given path ends up bind-mounted (live, no copying needed) or
+# copied/synced (staged through .agent-sync) is decided at runtime, not by
+# anything recorded here: postCreate.sh and syncConfigOut.sh each check
+# whether a path is actually mounted (see is_bind_mounted() in both) rather
+# than trusting a label here. A label can drift out of sync with
+# devcontainer.json's "mounts" array -- a path added here without a
+# matching mounts entry, or a mount that fails to attach -- and silently
+# stop being synced with no error. Checking the live filesystem instead
+# means a missing mount degrades to the slower copy/sync path instead of
+# losing data outright. seedHostConfig.sh, which runs on the host before
+# any mount exists, decides the same way but against the real host path:
+# [ -d ] for a directory, anything else treated as a file.
 
 # Claude Code
-.claude|dir
-.claude.json|json
+.claude
+.claude.json
 
 # Codex
-.codex|dir
+.codex
 
 # OpenCode
-.config/opencode|dir
-.local/share/opencode|dir
-.local/state/opencode|dir
+.config/opencode
+.local/share/opencode
+.local/state/opencode
 
 # Kilocode CLI
-.config/kilo|dir
-.local/share/kilo|dir
-.local/state/kilo|dir
+.config/kilo
+.local/share/kilo
+.local/state/kilo
 
 # GitHub CLI
-.config/gh|dir
+.config/gh
 
 # Antigravity CLI / Gemini CLI (shared ~/.gemini tree)
-.gemini|dir
+.gemini
 
 # GitHub Copilot CLI (session-store.db mixes login in with everything else
 # it stores, same reasoning as the other directories above)
-.copilot|dir
+.copilot
