@@ -30,33 +30,6 @@ prepare_agent_sync
 
 script_dir=$(dirname "$0")
 
-# Start the sync-out watcher as early as this script can possibly manage --
-# its only prerequisites are $HOME/.agent-sync existing and writable (just
-# above) and inotifywait being on PATH, which the apt-packages feature in
-# devcontainer.json now guarantees before this script even starts (see that
-# feature entry for why). Every step below this point (the History symlink,
-# the config copy-in loop, npm/uv installs) can still fail without taking the
-# watcher down with it: devcontainer.json sets postStartCommand to waitFor
-# postCreateCommand, so if this script exits non-zero, postStartCommand never
-# runs at all for the rest of this container's life -- confirmed in practice,
-# not just in theory: the devcontainers CLI logs "Skipping any further
-# user-provided commands" and skips postStartCommand outright on a
-# postCreateCommand failure. Any Claude Code login done in that broken
-# container would then live only in the container's ephemeral filesystem and
-# be discarded on the next rebuild, forcing a re-login, since nothing ever
-# pushed it out to the host-backed .agent-sync mount. Safe to invoke twice:
-# syncConfigOut.sh guards itself with a pidfile, so postStartCommand's later
-# invocation of the same script is just a no-op once this one is already
-# running.
-#
-# setsid, not just nohup: postCreateCommand runs as its own exec session
-# same as postStartCommand does, and nohup alone only blocks SIGHUP -- a
-# group-wide signal on that session's teardown could still take a bare
-# nohup'd child down with it (see devcontainer.json's postStartCommand for
-# where this was confirmed live). setsid detaches into a new session/process
-# group so nothing that only signals the old group can reach it.
-setsid nohup bash "$script_dir/syncConfigOut.sh" > /tmp/sync-config-out.log 2>&1 < /dev/null &
-
 # Mounted from this project's host-side sync directory so VS Code Local
 # History survives devcontainer rebuilds. Docker can create bind mount
 # targets as root, so normalize ownership before the server writes to it.
@@ -170,6 +143,38 @@ while IFS='|' read -r relpath kind; do
       ;;
   esac
 done < "$script_dir/config-files.txt"
+
+# Start the sync-out watcher only now, after the copy-in loop above has run
+# copy_staged_json_config for .claude.json -- not "as early as possible" like
+# a prior version of this script did. The claude-code feature's own install
+# step writes a default, logged-out ~/.claude.json into the image itself
+# (confirmed in practice: `docker run --rm <this image> stat
+# /home/vscode/.claude.json` shows it present with a build-time mtime, before
+# any postCreate.sh code ever runs), and that placeholder is baked into a
+# cached image layer, so it's present again on every rebuild that reuses the
+# cache. Backgrounding the watcher any earlier than this raced its own
+# one-time catch-up sync (syncConfigOut.sh's sync_all_json) against the
+# copy-in loop above: whichever won decided whether the host's real,
+# previously-synced .claude.json survived the rebuild or got overwritten by
+# the image's logged-out placeholder -- confirmed in practice, this is what
+# was silently discarding logins on rebuild. Now the container's
+# ~/.claude.json is already the real, restored copy by the time the watcher
+# takes its first look, so there's nothing stale left for it to push out.
+#
+# Still runs before the slower, more failure-prone steps below (actionlint/
+# hadolint downloads, pnpm/uv installs): if any of those fail, postStartCommand
+# never runs at all (devcontainer.json waits for postCreateCommand, and the
+# devcontainers CLI skips postStartCommand outright on a postCreateCommand
+# failure), so launching the watcher here instead of at the very end still
+# means a login made in an otherwise-broken container gets synced out.
+#
+# setsid, not just nohup: postCreateCommand runs as its own exec session
+# same as postStartCommand does, and nohup alone only blocks SIGHUP -- a
+# group-wide signal on that session's teardown could still take a bare
+# nohup'd child down with it (see devcontainer.json's postStartCommand for
+# where this was confirmed live). setsid detaches into a new session/process
+# group so nothing that only signals the old group can reach it.
+setsid nohup bash "$script_dir/syncConfigOut.sh" > /tmp/sync-config-out.log 2>&1 < /dev/null &
 
 # actionlint/hadolint versions+checksums are pinned in tool-versions.env --
 # the same source tests.yaml's meta-lint job installs them from (see that
