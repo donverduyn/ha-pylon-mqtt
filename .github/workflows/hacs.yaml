@@ -3,8 +3,10 @@ name: HACS
 on:
   # No push:master trigger: master commits are already covered by the
   # pull_request run on the PR that merged them (required by branch
-  # protection). The daily schedule catches drift from HACS's own
-  # validation rules changing, independent of any push here.
+  # protection). No standalone schedule either: the weekly github-actions
+  # Dependabot PR that bumps hacs/action's pin already re-runs this
+  # workflow via pull_request, which is enough cadence to catch drift from
+  # HACS's own validation rules changing.
   # Deliberately NOT adding labeled/unlabeled here — see tests.yaml's
   # identical comment for why (in short: `gh pr create --label` fires
   # opened and labeled as two separate events for the same commit, which
@@ -12,8 +14,6 @@ on:
   # common case with only one run).
   pull_request:
     types: [opened, synchronize, reopened]
-  schedule:
-    - cron: "0 0 * * *"
   workflow_dispatch:
 
 permissions: {}
