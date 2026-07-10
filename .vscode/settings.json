@@ -15,5 +15,10 @@
     "**/__pycache__": true,
     "**/.mypy_cache": true,
     "**/.coverage*": true,
-  }
+  },
+  "python.testing.pytestArgs": [
+    "tests"
+  ],
+  "python.testing.unittestEnabled": false,
+  "python.testing.pytestEnabled": true
 }
