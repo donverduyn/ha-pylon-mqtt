@@ -1,23 +1,34 @@
 name: CodeQL Gate
 
-# Shared by autorelease.yaml (gates a release) and tests.yaml (gates a PR
-# merge, and deliberately not subject to skip-ci — see tests.yaml's own
-# comment on why): waits for codeql.yml's check-runs on this exact commit
-# to finish, then fails if there's an open high/critical alert on this
-# run's ref. codeql.yml triggers independently off the same event as
-# either caller — there's no built-in ordering between separate workflow
-# files, so its check-runs may not exist yet, or may still be running,
-# when this starts.
+# Called by tests.yaml (gates a PR merge, deliberately not subject to
+# skip-ci — see tests.yaml's own comment on why): waits for codeql.yml's
+# check-runs on the given commit to finish, then fails if there's an open
+# high/critical alert on the given ref. codeql.yml triggers independently
+# off the same pull_request event as the caller — there's no built-in
+# ordering between separate workflow files, so its check-runs may not
+# exist yet, or may still be running, when this starts.
 #
-# Reads github.sha/github.ref directly rather than taking them as inputs:
-# a reusable workflow inherits the same event context as its caller, so
-# these already resolve correctly per caller — refs/heads/master for
-# autorelease.yaml's push event, refs/pull/<n>/merge for tests.yaml's
-# pull_request event — without risking a caller passing a mismatched
-# value.
+# sha/ref are required inputs, not read from github.sha/github.ref:
+# confirmed live (PR #96) that github.sha for a pull_request-triggered run
+# is an ephemeral merge-preview commit with no check-runs of its own, NOT
+# the PR's actual head commit — the "Wait for CodeQL" step looped "0
+# found, 0 pending" forever because it was polling a SHA that never had
+# anything posted against it. codeql.yml's check-runs are posted against
+# the PR's real head commit (github.event.pull_request.head.sha). The
+# caller is responsible for passing the right values for its own event
+# type rather than this workflow guessing from inherited context.
 
 on:
-  workflow_call: {}
+  workflow_call:
+    inputs:
+      sha:
+        description: "Commit SHA to wait for codeql.yml's check-runs on"
+        required: true
+        type: string
+      ref:
+        description: "Ref to check code-scanning alerts against (e.g. refs/pull/<n>/merge)"
+        required: true
+        type: string
 
 permissions: {}
 
@@ -39,7 +50,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
-          SHA: ${{ github.sha }}
+          SHA: ${{ inputs.sha }}
         run: |
           set -euo pipefail
           deadline=$(( $(date +%s) + 600 ))
@@ -68,7 +79,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
-          REF: ${{ github.ref }}
+          REF: ${{ inputs.ref }}
         # Checks *all* currently-open high/critical alerts on this ref, not
         # just ones newly introduced by this push/PR — an old alert that
         # slipped in via a skip-ci merge, or one newly surfaced by the

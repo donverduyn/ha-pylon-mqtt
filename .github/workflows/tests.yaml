@@ -249,6 +249,15 @@ jobs:
       security-events: read
       checks: read
     uses: ./.github/workflows/codeql-gate.yaml
+    with:
+      # github.sha/github.ref are NOT used here on purpose — see
+      # codeql-gate.yaml's top comment for why they resolve to an
+      # ephemeral merge-preview commit under pull_request, not the PR's
+      # real head commit codeql.yml's check-runs are actually posted
+      # against. Falls back to github.sha/github.ref for workflow_dispatch
+      # (no pull_request object to read a head sha/number from).
+      sha: ${{ github.event.pull_request.head.sha || github.sha }}
+      ref: ${{ (github.event.pull_request.number && format('refs/pull/{0}/merge', github.event.pull_request.number)) || github.ref }}
 
   docker-build:
     # Runs concurrently with pytest rather than gated behind it: pytest
