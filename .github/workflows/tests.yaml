@@ -100,7 +100,7 @@ jobs:
     # Anchored here and aliased by lint/meta-lint/docker-build below — same
     # condition, defined once. (Can't use env: for this instead: the env
     # context isn't available in job-level `if:`.)
-    if: &skip_unless_real_check "!cancelled() && (needs.detect-release.outputs.skip_ci != 'true' || needs.detect-release.outputs.is_release == '')"
+    if: &skip_unless_real_check "!cancelled() && !(needs.detect-release.outputs.skip_ci == 'true' && needs.detect-release.outputs.is_release == 'false')"
     strategy:
       fail-fast: false
       matrix:

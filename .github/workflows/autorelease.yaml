@@ -26,9 +26,8 @@ name: Auto-release
 # here: every commit on master already passed the full unit → build →
 # e2e pipeline on its PR (see tests.yaml), enforced by branch
 # protection's required status checks.
-# Also carries refresh-dependabot-branch and populate-docker-build-cache
-# (both unrelated to releasing, but share this exact push:master trigger,
-# which is the natural signal for each — see their own comments for why).
+# Also carries populate-docker-build-cache (unrelated to releasing, but the
+# push:master trigger is the natural signal for it — see its own comment).
 on:
   push:
     branches:
@@ -88,73 +87,6 @@ jobs:
     uses: ./.github/workflows/release.yaml
     with:
       tag: ${{ needs.detect.outputs.tag }}
-
-  refresh-dependabot-branch:
-    # gh pr merge --auto (dependabot-auto-merge.yaml) only *waits* for
-    # required checks and an up-to-date branch — it never rebases a stale
-    # one itself, and GitHub doesn't do this automatically either. Without
-    # this job, a Dependabot PR that's otherwise ready to merge can sit
-    # stuck "out of date" indefinitely once *other*, unrelated PRs merge to
-    # master, since nothing re-fires its own pull_request event to prompt
-    # a rebase. Reacting to push:master directly — the exact event that
-    # introduces the staleness — means a queued Dependabot PR is never
-    # more than one merge cycle behind.
-    #
-    # Only ever advances ONE PR per master push, oldest first, and stops
-    # after the first one it actually updates — deliberately not every
-    # open Dependabot PR at once. Grouped security updates (see
-    # dependabot.yml) mean there's usually at most one open anyway, but on
-    # the rare occasion a second opens before the first merges, rebasing
-    # both onto the *same* pre-merge master and letting them race would
-    # mean neither gets tested against the other's changes. One-at-a-time
-    # means each subsequent PR is always rebased onto (and re-tested
-    # against) a master that already includes every previously merged
-    # Dependabot change — an incompatibility surfaces as a CI failure on
-    # the *next* PR rather than both merging blind. That PR's eventual
-    # merge (via dependabot-auto-merge.yaml's pull_request_target-triggered
-    # job, once its fresh CI passes) is itself a master push, which
-    # re-triggers this job and advances the queue by one more — cascades
-    # naturally without polling.
-    #
-    # Skips (rather than stops on) a PR that fails to rebase — already
-    # current, or a real conflict update-branch can't resolve — so one
-    # stuck PR doesn't permanently block whatever's behind it in the
-    # queue.
-    runs-on: "ubuntu-latest"
-    permissions:
-      contents: write
-      pull-requests: write
-    steps:
-      - name: Rebase the oldest open Dependabot PR that needs it
-        env:
-          GH_TOKEN: ${{ github.token }}
-          REPO: ${{ github.repository }}
-        run: |
-          set -euo pipefail
-          prs="$(gh pr list --repo "$REPO" --state open --json number,author,createdAt \
-            --jq '[.[] | select(.author.login == "dependabot[bot]" or .author.login == "app/dependabot")] | sort_by(.createdAt)')"
-          count="$(echo "$prs" | jq 'length')"
-          if [ "$count" = "0" ]; then
-            echo "No open Dependabot PRs."
-            exit 0
-          fi
-          # Process substitution (< <(...)), not a `| while` pipe: a piped
-          # while loop runs in a subshell, where `exit` only terminates
-          # that subshell — control would fall through to the trailing
-          # echo below even after successfully updating a PR, printing a
-          # contradictory "no PR needed rebasing" right after "updated".
-          # This form keeps the loop in the main shell so `exit` actually
-          # ends the script.
-          while read -r pr; do
-            number="$(echo "$pr" | jq -r .number)"
-            echo "Attempting to rebase PR #$number (oldest first)..."
-            if gh api "repos/$REPO/pulls/$number/update-branch" -X PUT >/dev/null 2>&1; then
-              echo "  updated — stopping here for this run (one PR per master push)."
-              exit 0
-            fi
-            echo "  already up to date, or has a real conflict — trying the next oldest."
-          done < <(echo "$prs" | jq -c '.[]')
-          echo "No open Dependabot PR needed rebasing."
 
   populate-docker-build-cache:
     # tests.yaml's docker-build job caches the built sidecar image keyed on

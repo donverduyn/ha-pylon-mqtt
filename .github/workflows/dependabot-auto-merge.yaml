@@ -19,6 +19,13 @@ name: Dependabot Auto-merge
 # nothing to act on — it stays open (and pending) until
 # close-stale-automation-prs.yaml eventually retires it.
 #
+# The pull-request trigger enables auto-merge as soon as an eligible PR is
+# opened or updated. The weekly trigger owns the related branch maintenance:
+# it rebases every open Dependabot PR that needs it so an otherwise-ready PR
+# cannot remain blocked forever on an out-of-date branch. Keeping both
+# operations in this workflow prevents unrelated push/release workflows from
+# also owning Dependabot lifecycle work.
+#
 # pull_request_target, not pull_request: a plain pull_request event from
 # a Dependabot-authored PR runs with a read-only GITHUB_TOKEN and no
 # access to user-defined secrets at all, regardless of this file's
@@ -37,23 +44,32 @@ name: Dependabot Auto-merge
 on:
   pull_request_target:
     types: [opened, synchronize, reopened]
+  workflow_dispatch:
+  schedule:
+    # Monday 08:22 UTC; after dependency-updates.yaml (08:17) and well ahead
+    # of close-stale-automation-prs.yaml (08:50) — a wide buffer so a
+    # delayed scheduled run (GitHub Actions gives no start-time guarantee)
+    # still lands before staleness is evaluated.
+    - cron: "22 8 * * 1"
 
 permissions: {}
 
-# cancel-in-progress cancels a *stale* run for this PR (e.g. a new push
-# superseding the previous push's run) — same reasoning as tests.yaml's
-# identical group key. Without this, rapid-fire synchronize events (e.g.
-# Dependabot pushing several updates to the same PR in quick succession)
-# could run this job concurrently across stale and fresh commits; harmless
-# (re-enabling auto-merge is idempotent) but wasteful and inconsistent
-# with every other pull_request-triggered workflow in this repo.
+# PR runs are grouped by PR number; weekly/manual runs fall back to a fixed
+# literal (not github.ref) so every non-PR trigger — the schedule, or a
+# workflow_dispatch fired against any ref — always shares one group,
+# cancelling a stale run of the same kind regardless of which ref triggered
+# it. This cancels only an older run of the same kind, not a scheduled
+# refresh and the synchronize event that refresh can produce.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number }}
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || 'scheduled' }}
   cancel-in-progress: true
 
 jobs:
   auto-merge:
-    if: github.event.pull_request.user.login == 'dependabot[bot]' || github.event.pull_request.user.login == 'app/dependabot'
+    if: >-
+      github.event_name == 'pull_request_target' &&
+      (github.event.pull_request.user.login == 'dependabot[bot]' ||
+      github.event.pull_request.user.login == 'app/dependabot')
     runs-on: "ubuntu-latest"
     permissions:
       pull-requests: write
@@ -73,3 +89,59 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PR_URL: ${{ github.event.pull_request.html_url }}
         run: gh pr merge --auto --squash "$PR_URL"
+
+  refresh-dependabot-branch:
+    # Auto-merge waits for required checks and an up-to-date branch; it does
+    # not update a stale Dependabot branch itself. This used to advance only
+    # the oldest queued PR per run, relying on each PR's own merge (a push to
+    # master) to re-trigger the next rebase in cascade — that cascade only
+    # existed while this job ran on push:master. Now that it's weekly-only
+    # (see this file's "on:" comment for why that trigger moved here), one
+    # PR per run would leave any PR behind the front of the queue untouched
+    # for a full week — long enough for close-stale-automation-prs.yaml's
+    # 7-day rule to close it before it was ever rebased even once. So this
+    # rebases every open Dependabot PR that needs it, oldest first, in the
+    # same run. Trade-off: a rare batch of multiple simultaneously-open
+    # Dependabot PRs (grouped security updates mean there's usually at most
+    # one — see dependabot.yml) are all rebased onto the same pre-run master
+    # rather than each testing against the others' changes in sequence;
+    # accepted because a PR that's never rebased at all (and gets closed as
+    # stale) is strictly worse than one rebased but not cross-tested, and
+    # dependency-updates.yaml/min-ha-version-update.yaml already resolve the
+    # whole dependency set together weekly regardless.
+    #
+    # Continues (rather than stops) on a PR that fails to rebase — already
+    # current, or a real conflict update-branch cannot resolve — so one stuck
+    # PR does not block the rest of the queue.
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: "ubuntu-latest"
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - name: Rebase every open Dependabot PR that needs it
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          prs="$(gh pr list --repo "$REPO" --state open --json number,author,createdAt \
+            --jq '[.[] | select(.author.login == "dependabot[bot]" or .author.login == "app/dependabot")] | sort_by(.createdAt)')"
+          count="$(echo "$prs" | jq 'length')"
+          if [ "$count" = "0" ]; then
+            echo "No open Dependabot PRs."
+            exit 0
+          fi
+          # Process substitution (< <(...)), not a `| while` pipe: a piped
+          # while loop runs in a subshell, where a mid-loop failure under
+          # `set -e` would only terminate that subshell, silently skipping
+          # the rest of the queue instead of failing the job.
+          while read -r pr; do
+            number="$(echo "$pr" | jq -r .number)"
+            echo "Attempting to rebase PR #$number..."
+            if gh api "repos/$REPO/pulls/$number/update-branch" -X PUT >/dev/null 2>&1; then
+              echo "  updated."
+            else
+              echo "  already up to date, or has a real conflict — leaving as-is."
+            fi
+          done < <(echo "$prs" | jq -c '.[]')
