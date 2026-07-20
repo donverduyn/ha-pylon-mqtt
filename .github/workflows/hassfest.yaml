@@ -1,13 +1,11 @@
 name: Hassfest
 
 on:
-  # No push:master trigger: master commits are already covered by the
-  # pull_request run on the PR that merged them (required by branch
-  # protection). No standalone schedule either: the weekly github-actions
-  # Dependabot PR that bumps home-assistant/actions/hassfest's pin already
-  # re-runs this workflow via pull_request, which is enough cadence to
-  # catch drift from upstream HA core (this action clones it live — see
-  # the validate job).
+  # Hassfest intentionally validates against live upstream rules and a
+  # floating validator image. Run it weekly with no token permissions so that
+  # drift is visible even when the outer action SHA has not changed.
+  schedule:
+    - cron: "29 6 * * 0"
   # Deliberately NOT adding labeled/unlabeled here — see tests.yaml's
   # identical comment for why (in short: `gh pr create --label` fires
   # opened and labeled as two separate events for the same commit, which
@@ -38,6 +36,7 @@ jobs:
 
   validate:
     runs-on: "ubuntu-latest"
+    timeout-minutes: 15
     needs: [detect-release]
     # Skips at the job level (→ a real "skipped" conclusion) in the one
     # legitimate case: skip-ci is set AND detect-release confirmed this is
@@ -49,17 +48,19 @@ jobs:
     # rather than racing to complete real work that's about to be discarded).
     if: "!cancelled() && !(needs.detect-release.outputs.skip_ci == 'true' && needs.detect-release.outputs.is_release == 'false')"
     steps:
+      # Checkout first (needed to resolve the local composite action below),
+      # refuse-check second. No `if:` needed on it or the hassfest step
+      # after: the refuse step failing already skips them via the default
+      # per-step success() requirement.
+      - uses: "actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5" # v4.3.1
       - name: Refuse skip-ci on a release PR
         # Duplicates detect-release's identical step (which only gives an
         # early signal — its own pass/fail isn't required by branch
         # protection) so *this* job explicitly fails instead of the
-        # checkout/hassfest steps below silently proceeding as if the
-        # label had been ignored. No `if:` needed on checkout/hassfest
-        # below: this step failing already skips them via the default
-        # per-step success() requirement.
-        if: needs.detect-release.outputs.is_release == 'true' && needs.detect-release.outputs.skip_ci == 'true'
-        run: |
-          echo "::error::skip-ci cannot be applied to a release PR — remove the label so this job runs normally before it auto-releases."
-          exit 1
-      - uses: "actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5" # v4.3.1
+        # hassfest step below silently proceeding as if the label had been
+        # ignored.
+        uses: ./.github/actions/refuse-skip-ci-on-release
+        with:
+          is_release: ${{ needs.detect-release.outputs.is_release }}
+          skip_ci: ${{ needs.detect-release.outputs.skip_ci }}
       - uses: "home-assistant/actions/hassfest@f4ca6f671bd429efb108c0f2fa0ae8af0215986c" # master @ 2026-06-22

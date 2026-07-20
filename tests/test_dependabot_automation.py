@@ -112,16 +112,24 @@ def test_auto_merge_workflow_separates_updates_from_group_queue() -> None:
     assert "queue-dependabot-group:" in text
     assert "needs: update-open-pr-branches" in text
     assert "run: .github/scripts/queue-dependabot-group.sh" in text
+    assert "reviewDecision" in text
+    assert ".commit_id == $head" in text
     assert "Enable auto-merge and rebase every open Dependabot PR" not in text
 
 
-def test_stale_cleanup_uses_open_age_not_branch_update_time() -> None:
+def test_stale_cleanup_labels_but_never_closes_dependabot() -> None:
     text = STALE_WORKFLOW.read_text()
 
     assert "age_days" in text
-    assert 'if [ "$age_days" -ge 7 ]; then' in text
+    assert 'if [ "$age_days" -lt 7 ]; then' in text
     assert "createdAt,updatedAt" not in text
     assert "updated_hours_ago" not in text
+    assert "automation-needs-attention" in text
+
+    dependabot_policy = text.index('if [ "$is_dependabot" = "true" ]; then')
+    leave_open = text.index("continue", dependabot_policy)
+    close_own_automation = text.index('gh pr close "$number"', leave_open)
+    assert dependabot_policy < leave_open < close_own_automation
 
 
 def test_update_open_prs_rebases_dependabot_but_not_human_branches(

@@ -1,244 +1,374 @@
 name: Release
 
-# Pure publication — this workflow runs no tests. Every commit that can
-# reach master has already been through the full gauntlet on its PR (unit
-# suite, then image build + smoke test, then the e2e suite against that
-# image on both HA legs — see tests.yaml, whose jobs are ordered exactly
-# that way), so re-testing here would only re-verify what was verified
-# minutes earlier. What this workflow does own: baking the release version
-# into the image (SIDECAR_VERSION/GIT_SHA build args — see
-# docker/Dockerfile and src/main.py's diagnostics fields), scanning and
-# SBOM-ing the artifact actually being shipped, pushing it to GHCR, and
-# publishing the GitHub Release. That pairing is what lets a user match a
-# specific HACS release with a specific, reproducible sidecar image.
-#
-# Two entry points, one input: called by autorelease.yaml when a
-# manifest.json version bump lands on master (the normal path for rc and
-# final alike), or dispatched by hand from the Actions tab as an escape
-# hatch. There is deliberately no tag-push trigger: the v<version> tag is
-# *created by this workflow's last step*, not consumed by its first, so a
-# failed run leaves no tag (and no image, and no release) behind — re-run
-# it or re-bump, nothing to clean up.
+# Build, scan, attest, and publish one immutable version. The Git tag and
+# GitHub Release are created only after the versioned image and attestations
+# exist. Cross-service publication cannot be atomic, so a versioned image may
+# remain after a late failure; preflight checks refuse to overwrite that state
+# and turn recovery into an explicit maintainer decision.
 on:
   workflow_call:
     inputs:
       tag:
-        description: "The v-prefixed release tag to publish (created on success; must match manifest.json's version)"
+        description: "The v-prefixed release tag; it must match manifest.json"
         required: true
         type: string
   workflow_dispatch:
     inputs:
       tag:
-        description: "The v-prefixed release tag to publish (created on success; must match manifest.json's version)"
+        description: "The v-prefixed release tag; it must match manifest.json"
         required: true
         type: string
 
 permissions: {}
 
+# Serialize all publications because final releases may update shared :latest.
+concurrency:
+  group: release-publication
+  cancel-in-progress: false
+  queue: max
+
 jobs:
-  release:
+  validate:
     runs-on: "ubuntu-latest"
+    timeout-minutes: 10
     permissions:
-      contents: write
-      packages: write
+      contents: read
+    outputs:
+      tag: ${{ steps.release.outputs.tag }}
+      version: ${{ steps.release.outputs.version }}
+      is_prerelease: ${{ steps.release.outputs.is_prerelease }}
+      retag_latest: ${{ steps.release.outputs.retag_latest }}
     steps:
-      # No ref override: under workflow_call this is the master push that
-      # bumped the version; under workflow_dispatch it's the head of the
-      # ref the dispatcher chose. The tag doesn't exist yet either way.
-      # fetch-depth: 0 (full history) so the merge-base check below can
-      # actually walk back to origin/master instead of hitting a shallow
-      # clone's history boundary.
       - uses: "actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5" # v4.3.1
         with:
           fetch-depth: 0
+          persist-credentials: false
 
-      - name: Verify commit is reachable from master
-        # workflow_call always releases a commit already on master (the
-        # push that bumped the version), which trivially passes this. The
-        # workflow_dispatch escape hatch can target any ref, though: this
-        # guards against publishing a commit that never went through the
-        # required-checks gauntlet a PR-merged commit gets in tests.yaml
-        # (unit suite, image build + smoke test, e2e on both HA legs).
+      - name: Validate identity and preflight immutable names
+        id: release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          INPUT_TAG: ${{ inputs.tag }}
+          REPO: ${{ github.repository }}
+          TARGET_SHA: ${{ github.sha }}
         run: |
-          git fetch origin master
-          if ! git merge-base --is-ancestor HEAD origin/master; then
-            echo "::error::HEAD ($(git rev-parse HEAD)) is not reachable from origin/master, so it hasn't been through the required PR checks in tests.yaml. Refusing to release it."
+          set -euo pipefail
+
+          # Project releases use vMAJOR.MINOR.PATCH plus an optional
+          # SemVer-style prerelease suffix. This alphabet is also safe in
+          # Docker tags and GitHub output records.
+          if [[ ! "$INPUT_TAG" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z]+([.-][0-9A-Za-z]+)*)?$ ]]; then
+            echo "::error::Invalid release tag '$INPUT_TAG'; expected vMAJOR.MINOR.PATCH with an optional prerelease suffix."
             exit 1
           fi
 
-      - name: Derive version from tag
-        id: version
-        # Anything with a hyphen (e.g. v2.0.0-rc1) is a pre-release: it
-        # skips the ":latest" retag below and its GitHub Release is marked
-        # prerelease, so HACS only offers it to users who opted into betas.
-        # Final releases *should* wait for real-hardware validation (see
-        # CONTRIBUTING.md's "Contributing a real-hardware transcript"
-        # section) — the warning step below flags it, but doesn't block,
-        # since there's currently no way to force hardware access into
-        # existence.
-        env:
-          INPUT_TAG: ${{ inputs.tag }}
-        run: |
           version="${INPUT_TAG#v}"
-          if [[ "${version}" == *-* ]]; then
+          if [[ "$version" == *-* ]]; then
             is_prerelease=true
           else
             is_prerelease=false
           fi
-          {
-            echo "tag=${INPUT_TAG}"
-            echo "version=${version}"
-            echo "is_prerelease=${is_prerelease}"
-          } >> "$GITHUB_OUTPUT"
 
-      - name: Warn if publishing final without a real-hardware transcript
-        # Non-blocking: flags the gap on the run summary rather than
-        # failing the release, since there's no way to force hardware
-        # access into existence. See tests/fixtures/transcripts/README.md
-        # and CONTRIBUTING.md's "Contributing a real-hardware transcript"
-        # section for closing it.
-        if: steps.version.outputs.is_prerelease == 'false'
-        run: |
-          if ! ls tests/fixtures/transcripts/*.json >/dev/null 2>&1; then
-            echo "::warning::Publishing final release ${{ steps.version.outputs.version }} with zero real-hardware transcripts in tests/fixtures/transcripts/. Parser changes have only ever been validated against the hand-authored stub (scripts/pylon_stub.py), not real US2000/3000/5000/Pytes firmware."
-          fi
-
-      - name: Verify tag matches manifest version
-        # Exact match, rc suffix included: manifest.json carries precisely
-        # the version being released ("2.0.0-rc2" during an rc phase,
-        # "2.0.0" for the final — AwesomeVersion parses both as valid
-        # SemVer, so hassfest accepts the suffix). The installed
-        # integration therefore self-reports exactly what it is, and a tag
-        # can never ship a manifest claiming to be some other version.
-        # This is also what makes the rc phase reachable at all under
-        # autorelease.yaml: if the manifest carried the bare base version
-        # during rcs, the bump that put it on master would already have
-        # auto-released the final.
-        run: |
-          manifest_version="$(jq -r .version custom_components/pylontech_mqtt/manifest.json)"
-          if [ "${{ steps.version.outputs.version }}" != "$manifest_version" ]; then
-            echo "::error::Tag ${{ steps.version.outputs.tag }} (version ${{ steps.version.outputs.version }}) does not match manifest.json version ${manifest_version}"
+          manifest_version="$(
+            jq -er .version custom_components/pylontech_mqtt/manifest.json
+          )"
+          if [ "$version" != "$manifest_version" ]; then
+            echo "::error::Tag $INPUT_TAG does not match manifest.json version $manifest_version."
             exit 1
           fi
 
-      - uses: "docker/login-action@af1e73f918a031802d376d3c8bbc3fe56130a9b0" # v4.4.0
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      # Loaded into the local daemon (push: false) so the scan and SBOM
-      # below describe the artifact before anything is published; the push
-      # step then ships these exact bytes rather than a second build.
-      - uses: "docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a" # v7.3.0
-        with:
-          context: .
-          file: docker/Dockerfile
-          push: false
-          load: true
-          build-args: |
-            GIT_SHA=${{ github.sha }}
-            SIDECAR_VERSION=${{ steps.version.outputs.version }}
-          tags: |
-            ghcr.io/${{ github.repository }}:${{ steps.version.outputs.version }}
-
-      - name: Scan image for known vulnerabilities
-        # Report-only (exit-code 0), not a gate: a scan of the pinned base image
-        # alone (python:3.13.14-slim, see docker/Dockerfile) already turns up
-        # HIGH-severity CVEs in OS/vendored packages (e.g. perl-base,
-        # jaraco.context) that this project can't fix by changing its own code
-        # — only by the base image publisher patching upstream, same as the
-        # PYSEC-2026-* noise requirements_runtime.txt already keeps out of
-        # pip-audit. Failing the release on those would just make it
-        # permanently red for issues nobody here can act on; the table output
-        # gives visibility on exactly what ships. Runs here (per release)
-        # rather than per CI push, since only shipped artifacts matter.
-        uses: "aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25" # v0.36.0
-        with:
-          image-ref: "ghcr.io/${{ github.repository }}:${{ steps.version.outputs.version }}"
-          format: "table"
-          severity: "CRITICAL,HIGH"
-          exit-code: "0"
-          ignore-unfixed: true
-
-      - name: Generate SBOM
-        # Attached to the GitHub Release below, so the inventory travels
-        # with the artifact it describes instead of expiring as a CI
-        # artifact of some unrelated run.
-        uses: "anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610" # v0.24.0
-        with:
-          image: "ghcr.io/${{ github.repository }}:${{ steps.version.outputs.version }}"
-          format: "spdx-json"
-          output-file: "pylon2mqtt-sbom.spdx.json"
-
-      - name: Push the image
-        run: docker push "ghcr.io/${{ github.repository }}:${{ steps.version.outputs.version }}"
-
-      - name: Check whether this version is newer than the published :latest
-        # A hotfix release for an older line (e.g. 2.0.1 published after
-        # 2.1.0 already shipped) must still fully publish below -- the
-        # versioned image, scan, SBOM, and GitHub Release are all valid
-        # regardless -- it just must not move :latest *backward*. Queried
-        # directly from the remote (matching autorelease.yaml's ls-remote
-        # pattern) rather than relying on locally fetched tags. sort -V
-        # (GNU version-sort, standard on ubuntu-latest) is sufficient for
-        # this project's plain X.Y.Z tags. The `s/\^\{\}$//` strips the
-        # "peeled" ref git ls-remote emits alongside every annotated tag
-        # (refs/tags/vX.Y.Z^{}, pointing at the same version) -- left
-        # unstripped it would sort after the plain version and end up as
-        # $latest_published instead of the real tag.
-        #
-        # No `set -e` here, deliberately: `grep -Ev '[-]'` exits 1 (no
-        # match) whenever every currently-published tag is a prerelease --
-        # which is this repo's *actual current state* (only v2.0.0-rc1
-        # exists) -- and that non-zero exit would otherwise abort the step
-        # under pipefail before ever reaching the `-z "$latest_published"`
-        # fallback below that exists to handle exactly this case. Each
-        # failure-prone stage is additionally guarded with `|| true` so a
-        # transient `git ls-remote` network failure degrades to
-        # retag-latest=true (this repo's pre-existing unconditional-retag
-        # behavior) instead of crashing a job that has already pushed the
-        # image to ghcr.io by this point.
-        id: latest-check
-        if: steps.version.outputs.is_prerelease == 'false'
-        env:
-          NEW_VERSION: ${{ steps.version.outputs.version }}
-        run: |
-          set -uo pipefail
-          latest_published="$(
-            { git ls-remote --tags origin 'refs/tags/v*' || true; } \
-              | sed -E 's/\^\{\}$//; s#.*refs/tags/v##' \
-              | { grep -Ev '[-]' || true; } \
-              | sort -V \
-              | tail -n1
-          )"
-          if [ -z "$latest_published" ] || [ "$(printf '%s\n%s\n' "$latest_published" "$NEW_VERSION" | sort -V | tail -n1)" = "$NEW_VERSION" ]; then
-            echo "retag-latest=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "::warning::Not retagging :latest -> $NEW_VERSION: the currently published :latest is $latest_published, which is newer. This looks like a hotfix release for an older line -- the versioned image and GitHub Release still publish normally below; retag :latest by hand (docker buildx imagetools create) only if that's actually intended."
-            echo "retag-latest=false" >> "$GITHUB_OUTPUT"
+          git fetch --no-tags origin master
+          if ! git merge-base --is-ancestor "$TARGET_SHA" origin/master; then
+            echo "::error::Commit $TARGET_SHA is not reachable from origin/master."
+            exit 1
           fi
 
-      # Separate, conditional step rather than a second line in the tags list
-      # above: retagging the already-pushed digest is enough, no rebuild
-      # needed, and skipping it outright for prereleases is unambiguous —
-      # tagging ":latest" unconditionally previously let a v2.0.0-rc1 push
-      # overwrite the production "latest" tag with an unvalidated build.
-      - name: Tag latest (non-prerelease only, and not older than what's published)
-        if: steps.version.outputs.is_prerelease == 'false' && steps.latest-check.outputs.retag-latest == 'true'
-        run: |
-          docker buildx imagetools create \
-            --tag "ghcr.io/${{ github.repository }}:latest" \
-            "ghcr.io/${{ github.repository }}:${{ steps.version.outputs.version }}"
+          set +e
+          existing_tag="$(
+            git ls-remote --exit-code --tags origin \
+              "refs/tags/$INPUT_TAG" "refs/tags/$INPUT_TAG^{}" 2>&1
+          )"
+          tag_status=$?
+          set -e
+          case "$tag_status" in
+            0)
+              echo "::error::Tag $INPUT_TAG already exists; releases are never updated in place."
+              echo "$existing_tag"
+              exit 1
+              ;;
+            2)
+              ;;
+            *)
+              echo "::error::Could not determine whether tag $INPUT_TAG exists."
+              echo "$existing_tag"
+              exit 1
+              ;;
+          esac
 
-      - uses: "softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228" # v3.0.2
+          if gh api "repos/$REPO/releases/tags/$INPUT_TAG" \
+            >/dev/null 2>/tmp/release-api-error; then
+            echo "::error::A GitHub Release for $INPUT_TAG already exists."
+            exit 1
+          elif ! grep -q "HTTP 404" /tmp/release-api-error; then
+            echo "::error::Could not determine whether the GitHub Release exists."
+            cat /tmp/release-api-error
+            exit 1
+          fi
+
+          retag_latest=false
+          if [ "$is_prerelease" = "false" ]; then
+            tag_listing="$(git ls-remote --tags origin 'refs/tags/v*')" || {
+              echo "::error::Could not list existing release tags."
+              exit 1
+            }
+            latest_published="$(
+              printf '%s\n' "$tag_listing" \
+                | sed -E 's/\^\{\}$//; s#.*refs/tags/v##' \
+                | { grep -Ev '[-]' || true; } \
+                | sort -V \
+                | tail -n1
+            )"
+            if [ -z "$latest_published" ] \
+              || [ "$(
+                printf '%s\n%s\n' "$latest_published" "$version" \
+                  | sort -V | tail -n1
+              )" = "$version" ]; then
+              retag_latest=true
+            else
+              echo "::warning::Not moving :latest to $version because $latest_published is newer."
+            fi
+
+            if ! ls tests/fixtures/transcripts/*.json >/dev/null 2>&1; then
+              echo "::warning::Publishing final release $version without a real-hardware transcript."
+            fi
+          fi
+
+          {
+            echo "tag=$INPUT_TAG"
+            echo "version=$version"
+            echo "is_prerelease=$is_prerelease"
+            echo "retag_latest=$retag_latest"
+          } >> "$GITHUB_OUTPUT"
+
+  build-and-scan:
+    needs: validate
+    runs-on: "ubuntu-latest"
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    steps:
+      - uses: "actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5" # v4.3.1
         with:
-          # This is the step that mints the v<version> tag (at the commit
-          # this run checked out) — deliberately the pipeline's last act,
-          # so any earlier failure leaves no tag to clean up before
-          # retrying.
-          tag_name: ${{ steps.version.outputs.tag }}
-          target_commitish: ${{ github.sha }}
-          generate_release_notes: true
-          prerelease: ${{ steps.version.outputs.is_prerelease }}
-          files: pylon2mqtt-sbom.spdx.json
+          persist-credentials: false
+
+      - name: Build release image
+        env:
+          TARGET_SHA: ${{ github.sha }}
+          VERSION: ${{ needs.validate.outputs.version }}
+        run: |
+          set -euo pipefail
+          docker build -f docker/Dockerfile \
+            --build-arg GIT_SHA="$TARGET_SHA" \
+            --build-arg SIDECAR_VERSION="$VERSION" \
+            --tag pylon2mqtt:release .
+
+      - name: Gate on fixable high or critical vulnerabilities
+        uses: "aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25" # v0.36.0
+        with:
+          image-ref: "pylon2mqtt:release"
+          format: "table"
+          severity: "CRITICAL,HIGH"
+          exit-code: "1"
+          ignore-unfixed: true
+
+      - name: Generate SBOM with checksum-pinned Syft
+        run: |
+          set -euo pipefail
+          # shellcheck disable=SC1091
+          . .devcontainer/tool-versions.env
+          curl -fsSLo /tmp/syft.tar.gz \
+            "https://github.com/anchore/syft/releases/download/v$SYFT_VERSION/syft_${SYFT_VERSION}_linux_amd64.tar.gz"
+          echo "$SYFT_SHA256  /tmp/syft.tar.gz" | sha256sum -c
+          tar xzf /tmp/syft.tar.gz -C /tmp syft
+          /tmp/syft pylon2mqtt:release \
+            -o spdx-json=pylon2mqtt-sbom.spdx.json
+
+      - name: Save release image
+        run: docker save pylon2mqtt:release | gzip > pylon2mqtt-release.tar.gz
+
+      - uses: "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a" # v7.0.1
+        with:
+          name: release-image
+          path: pylon2mqtt-release.tar.gz
+          compression-level: 0
+          retention-days: 1
+
+      - uses: "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a" # v7.0.1
+        with:
+          name: release-sbom
+          path: pylon2mqtt-sbom.spdx.json
+          retention-days: 1
+
+  publish-image:
+    needs: [validate, build-and-scan]
+    runs-on: "ubuntu-latest"
+    timeout-minutes: 20
+    environment: release
+    permissions:
+      actions: read
+      packages: write
+    outputs:
+      digest: ${{ steps.push.outputs.digest }}
+    steps:
+      - uses: "actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c" # v8.0.1
+        with:
+          name: release-image
+
+      - name: Load, preflight, and push versioned image
+        id: push
+        env:
+          GH_TOKEN: ${{ github.token }}
+          IMAGE_NAME: ghcr.io/${{ github.repository }}
+          VERSION: ${{ needs.validate.outputs.version }}
+        run: |
+          set -euo pipefail
+          gzip -dc pylon2mqtt-release.tar.gz | docker load
+          image_ref="$IMAGE_NAME:$VERSION"
+          docker tag pylon2mqtt:release "$image_ref"
+          printf '%s' "$GH_TOKEN" \
+            | docker login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
+
+          if docker manifest inspect "$image_ref" \
+            >/dev/null 2>/tmp/manifest-error; then
+            echo "::error::Container tag $image_ref already exists; refusing to overwrite it."
+            exit 1
+          elif ! grep -Eqi \
+            'manifest unknown|no such manifest|not found' /tmp/manifest-error; then
+            echo "::error::Could not determine whether $image_ref exists."
+            cat /tmp/manifest-error
+            exit 1
+          fi
+
+          docker push "$image_ref" 2>&1 | tee /tmp/docker-push.log
+          digest="$(
+            sed -n \
+              's/^.*digest: \(sha256:[0-9a-f]\{64\}\).*$/\1/p' \
+              /tmp/docker-push.log \
+              | tail -n1
+          )"
+          if [ -z "$digest" ]; then
+            echo "::error::The registry push did not report an image digest."
+            exit 1
+          fi
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
+
+  attest-image:
+    needs: [build-and-scan, publish-image]
+    runs-on: "ubuntu-latest"
+    timeout-minutes: 15
+    environment: release
+    permissions:
+      actions: read
+      artifact-metadata: write
+      attestations: write
+      id-token: write
+      packages: write
+    steps:
+      - uses: "actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c" # v8.0.1
+        with:
+          name: release-sbom
+
+      - name: Authenticate attestation publication
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          printf '%s' "$GH_TOKEN" \
+            | docker login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
+
+      - name: Attest build provenance
+        uses: "actions/attest@59d89421af93a897026c735860bf21b6eb4f7b26" # v4.1.0
+        with:
+          subject-name: ghcr.io/${{ github.repository }}
+          subject-digest: ${{ needs.publish-image.outputs.digest }}
+          push-to-registry: true
+          create-storage-record: false
+
+      - name: Attest SBOM
+        uses: "actions/attest@59d89421af93a897026c735860bf21b6eb4f7b26" # v4.1.0
+        with:
+          subject-name: ghcr.io/${{ github.repository }}
+          subject-digest: ${{ needs.publish-image.outputs.digest }}
+          sbom-path: pylon2mqtt-sbom.spdx.json
+          push-to-registry: true
+          create-storage-record: false
+
+  publish-release:
+    needs: [validate, build-and-scan, publish-image, attest-image]
+    runs-on: "ubuntu-latest"
+    timeout-minutes: 10
+    environment: release
+    permissions:
+      actions: read
+      contents: write
+    steps:
+      - uses: "actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c" # v8.0.1
+        with:
+          name: release-sbom
+
+      - name: Recheck immutable names and create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          IS_PRERELEASE: ${{ needs.validate.outputs.is_prerelease }}
+          REPO: ${{ github.repository }}
+          TAG: ${{ needs.validate.outputs.tag }}
+          TARGET_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+
+          for endpoint in "git/ref/tags/$TAG" "releases/tags/$TAG"; do
+            if gh api "repos/$REPO/$endpoint" \
+              >/dev/null 2>/tmp/github-api-error; then
+              echo "::error::$endpoint already exists; refusing to mutate it."
+              exit 1
+            elif ! grep -q "HTTP 404" /tmp/github-api-error; then
+              echo "::error::Could not preflight $endpoint."
+              cat /tmp/github-api-error
+              exit 1
+            fi
+          done
+
+          args=(
+            release create "$TAG"
+            pylon2mqtt-sbom.spdx.json
+            --repo "$REPO"
+            --target "$TARGET_SHA"
+            --generate-notes
+          )
+          if [ "$IS_PRERELEASE" = "true" ]; then
+            args+=(--prerelease)
+          fi
+          gh "${args[@]}"
+
+  tag-latest:
+    needs: [validate, publish-image, publish-release]
+    if: >-
+      needs.validate.outputs.is_prerelease == 'false' &&
+      needs.validate.outputs.retag_latest == 'true'
+    runs-on: "ubuntu-latest"
+    timeout-minutes: 10
+    environment: release
+    permissions:
+      packages: write
+    steps:
+      - name: Move latest to the published immutable version
+        env:
+          GH_TOKEN: ${{ github.token }}
+          IMAGE_NAME: ghcr.io/${{ github.repository }}
+          VERSION: ${{ needs.validate.outputs.version }}
+        run: |
+          set -euo pipefail
+          printf '%s' "$GH_TOKEN" \
+            | docker login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
+          docker buildx imagetools create \
+            --tag "$IMAGE_NAME:latest" \
+            "$IMAGE_NAME:$VERSION"

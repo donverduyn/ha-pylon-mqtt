@@ -1,24 +1,13 @@
 name: PR Auto-merge
 
-# Branch freshness and merge eligibility are deliberately separate. Every
-# default-branch push updates every open PR: Dependabot branches are rebased,
-# while human branches receive a non-destructive merge update. Schedule and
-# manual events provide recovery runs.
+# Every default-branch push updates open PR branches. Grouped patch/minor
+# Dependabot updates then enter a single-flight auto-merge queue; individual
+# and major updates stay manual. Ordinary contributor PRs become eligible
+# after seven days only when GitHub reports a current approved review. Elapsed
+# time never substitutes for review.
 #
-# Automatic Dependabot merging is narrower. Only grouped patch/minor updates
-# enter a single-flight queue, with exactly one group allowed to have
-# auto-merge enabled. When that group merges, the resulting default-branch
-# push refreshes all remaining PRs and activates the next eligible group.
-# Single-dependency Dependabot PRs are kept current but never auto-merged:
-# exact HA/phacc pin collisions are expected to fail, and major updates remain
-# manual. Failed groups are skipped so they cannot block another ecosystem.
-#
-# Ordinary contributor PRs retain the slower policy: the weekly maintenance
-# run enables auto-merge after seven full days. Required checks, reviews, and
-# mergeability remain final gates for every automatic merge.
-#
-# workflow_run reacts after Tests completes, but always executes this trusted
-# default-branch workflow and never checks out PR code with a write token.
+# workflow_run executes this trusted default-branch workflow and never checks
+# out PR code with a write-capable token.
 on:
   workflow_dispatch:
   push:
@@ -30,10 +19,6 @@ on:
     types:
       - completed
   schedule:
-    # Monday 08:22 UTC; after dependency-updates.yaml (08:17) and well ahead
-    # of close-stale-automation-prs.yaml (08:50) — a wide buffer so a
-    # delayed scheduled run (GitHub Actions gives no start-time guarantee)
-    # still lands before staleness is evaluated.
     - cron: "22 8 * * 1"
 
 permissions: {}
@@ -41,6 +26,7 @@ permissions: {}
 concurrency:
   group: ${{ github.workflow }}
   cancel-in-progress: false
+  queue: max
 
 jobs:
   update-open-pr-branches:
@@ -50,25 +36,25 @@ jobs:
       github.event_name == 'workflow_dispatch'
     runs-on: "ubuntu-latest"
     timeout-minutes: 15
+    environment: automation
     permissions:
       contents: read
     steps:
+      # This checkout uses only the read-only job token. The write-capable App
+      # token is minted afterwards and is passed only to the gh-based updater.
+      - uses: "actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5" # v4.3.1
+        with:
+          persist-credentials: false
+
       - name: Create GitHub App token
         id: app-token
-        uses: "actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1" # v3.2.0
+        uses: ./.github/actions/automation-app-token
         with:
           client-id: ${{ vars.AUTOMATION_APP_CLIENT_ID }}
           private-key: ${{ secrets.AUTOMATION_APP_PRIVATE_KEY }}
-          permission-contents: write
-          permission-pull-requests: write
-          permission-workflows: write
-
-      - uses: "actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5" # v4.3.1
 
       - name: Update every open PR branch
         env:
-          # App-authenticated branch updates trigger ordinary pull_request CI;
-          # updates made with GITHUB_TOKEN would suppress those follow-up runs.
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
           REPO: ${{ github.repository }}
         run: .github/scripts/update-open-pr-branches.sh
@@ -81,20 +67,20 @@ jobs:
        needs.update-open-pr-branches.result == 'skipped')
     runs-on: "ubuntu-latest"
     timeout-minutes: 10
+    environment: automation
     permissions:
       contents: read
     steps:
+      - uses: "actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5" # v4.3.1
+        with:
+          persist-credentials: false
+
       - name: Create GitHub App token
         id: app-token
-        uses: "actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1" # v3.2.0
+        uses: ./.github/actions/automation-app-token
         with:
           client-id: ${{ vars.AUTOMATION_APP_CLIENT_ID }}
           private-key: ${{ secrets.AUTOMATION_APP_PRIVATE_KEY }}
-          permission-contents: write
-          permission-pull-requests: write
-          permission-workflows: write
-
-      - uses: "actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5" # v4.3.1
 
       - name: Activate one eligible Dependabot group PR
         env:
@@ -102,21 +88,19 @@ jobs:
           REPO: ${{ github.repository }}
         run: .github/scripts/queue-dependabot-group.sh
 
-  auto-merge-aged-regular-prs:
-    # A workflow_run event is useful only for Dependabot's immediate path
-    # above. Ordinary PRs become eligible because time passes, so scan them
-    # on the weekly schedule (and allow a manual recovery run).
+  auto-merge-aged-approved-regular-prs:
     needs: update-open-pr-branches
     if: >-
       always() &&
       (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') &&
       needs.update-open-pr-branches.result == 'success'
     runs-on: "ubuntu-latest"
+    timeout-minutes: 10
     permissions:
       contents: write
       pull-requests: write
     steps:
-      - name: Enable auto-merge for regular PRs open at least seven days
+      - name: Enable auto-merge for approved regular PRs open at least seven days
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
@@ -125,9 +109,15 @@ jobs:
 
           now="$(date +%s)"
           cutoff=$(( now - 7 * 86400 ))
-          default_branch="$(gh repo view "$REPO" --json defaultBranchRef --jq .defaultBranchRef.name)"
-          prs="$(gh pr list --repo "$REPO" --base "$default_branch" --state open --limit 1000 \
-            --json number,url,author,headRefName,createdAt,isDraft)"
+          default_branch="$(
+            gh repo view "$REPO" --json defaultBranchRef \
+              --jq .defaultBranchRef.name
+          )"
+          prs="$(
+            gh pr list --repo "$REPO" --base "$default_branch" \
+              --state open --limit 1000 \
+              --json number,url,author,headRefName,headRefOid,createdAt,isDraft,reviewDecision
+          )"
 
           if [ "$(echo "$prs" | jq 'length')" = "0" ]; then
             echo "No open PRs targeting $default_branch."
@@ -139,26 +129,44 @@ jobs:
             url="$(echo "$pr" | jq -r .url)"
             author="$(echo "$pr" | jq -r '.author.login // ""')"
             head_ref="$(echo "$pr" | jq -r .headRefName)"
+            head_sha="$(echo "$pr" | jq -r .headRefOid)"
             created_at="$(echo "$pr" | jq -r .createdAt)"
             is_draft="$(echo "$pr" | jq -r .isDraft)"
+            review_decision="$(echo "$pr" | jq -r '.reviewDecision // ""')"
 
             if [ "$is_draft" = "true" ]; then
               echo "PR #$number: draft — leaving for its author."
               continue
             fi
-            if [[ "$author" == *"[bot]" ]] || [[ "$author" == app/* ]] || [[ "$head_ref" == automation/* ]]; then
-              echo "PR #$number: bot/automation PR — governed by its dedicated policy."
+            if [[ "$author" == *"[bot]" ]] || [[ "$author" == app/* ]] \
+              || [[ "$head_ref" == automation/* ]]; then
+              echo "PR #$number: bot/automation PR — dedicated policy applies."
               continue
             fi
 
             created_epoch="$(date -d "$created_at" +%s)"
-            age_days=$(( ( now - created_epoch ) / 86400 ))
+            age_days=$(( (now - created_epoch) / 86400 ))
             if [ "$created_epoch" -gt "$cutoff" ]; then
               echo "PR #$number: open $age_days days — not eligible yet."
               continue
             fi
+            if [ "$review_decision" != "APPROVED" ]; then
+              echo "PR #$number: open $age_days days but reviewDecision is ${review_decision:-unset} — approval is required."
+              continue
+            fi
 
-            echo "PR #$number: open $age_days days — enabling auto-merge."
+            current_approvals="$(
+              gh api "repos/$REPO/pulls/$number/reviews" \
+                --paginate --jq '.[]' \
+                | jq -s --arg head "$head_sha" \
+                    '[.[] | select(.state == "APPROVED" and .commit_id == $head)] | length'
+            )"
+            if [ "$current_approvals" = "0" ]; then
+              echo "PR #$number: aggregate review is approved, but no approval targets current head $head_sha."
+              continue
+            fi
+
+            echo "PR #$number: open $age_days days with current-head approval — enabling auto-merge."
             gh pr merge --auto --squash "$url" \
-              || echo "  could not enable auto-merge — merge requirements or conflicts still block it."
+              || echo "Could not enable auto-merge; merge requirements still block it."
           done < <(echo "$prs" | jq -c '.[]')

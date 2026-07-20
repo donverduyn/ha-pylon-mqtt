@@ -1,0 +1,6 @@
+# GitHub Actions supports concurrency.queue, but actionlint v1.7.12 has not
+# added the key to its schema yet. Keep every other diagnostic enabled.
+paths:
+  .github/workflows/*.yaml:
+    ignore:
+      - 'unexpected key "queue" for "concurrency" section'

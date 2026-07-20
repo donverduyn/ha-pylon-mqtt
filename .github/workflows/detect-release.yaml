@@ -30,6 +30,7 @@ jobs:
     # "skip only if" conditions fall back to running checks whenever this
     # job didn't produce a confirmed is_release == 'false'.
     runs-on: "ubuntu-latest"
+    timeout-minutes: 5
     if: github.event_name == 'pull_request'
     permissions:
       contents: read
@@ -39,12 +40,16 @@ jobs:
       skip_ci: ${{ steps.labels.outputs.skip_ci }}
     steps:
       - uses: "actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5" # v4.3.1
+        with:
+          persist-credentials: false
       - name: Compare manifest.json version against the PR base
         id: check
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: |
           manifest="custom_components/pylontech_mqtt/manifest.json"
           new="$(jq -r .version "$manifest")"
-          git fetch --depth=1 origin "${{ github.event.pull_request.base.sha }}"
+          git fetch --depth=1 origin "$BASE_SHA"
           old="$(git show FETCH_HEAD:"$manifest" 2>/dev/null | jq -r .version || echo "")"
           if [ "$new" = "$old" ]; then
             echo "is_release=false" >> "$GITHUB_OUTPUT"
@@ -64,8 +69,9 @@ jobs:
         id: labels
         env:
           GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
-          if gh pr view "${{ github.event.pull_request.number }}" --json labels -q '.labels[].name' \
+          if gh pr view "$PR_NUMBER" --json labels -q '.labels[].name' \
               | grep -qx 'skip-ci'; then
             echo "skip_ci=true" >> "$GITHUB_OUTPUT"
           else
@@ -76,7 +82,7 @@ jobs:
         # required status check, so each caller's actual required-check job
         # (tests-finished/validate) independently repeats this exact check
         # and is what actually fails the PR.
-        if: steps.check.outputs.is_release == 'true' && steps.labels.outputs.skip_ci == 'true'
-        run: |
-          echo "::error::skip-ci cannot be applied to a release PR (manifest.json version changed against the base branch) — remove the label so the normal checks run before this auto-releases."
-          exit 1
+        uses: ./.github/actions/refuse-skip-ci-on-release
+        with:
+          is_release: ${{ steps.check.outputs.is_release }}
+          skip_ci: ${{ steps.labels.outputs.skip_ci }}

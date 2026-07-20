@@ -1,9 +1,9 @@
 name: Tests
 
 on:
-  # No push:master trigger: master commits are already covered by the
-  # pull_request run on the PR that merged them (required by branch
-  # protection).
+  # Keep CodeQL and the rest of the validation suite together: every push is
+  # tested here, including default-branch pushes that may trigger a release.
+  push:
   # Deliberately NOT adding labeled/unlabeled here (tried once, reverted):
   # `gh pr create --label` fires opened and labeled as two separate events
   # for the same commit, since GitHub has no atomic "create pre-labeled"
@@ -24,12 +24,12 @@ on:
 permissions: {}
 
 concurrency:
-  # cancel-in-progress cancels a *stale* run for this PR (e.g. a new push
-  # superseding the previous push's run) — safe now that labeled/unlabeled
-  # can't trigger this workflow at all, so there's no longer a label-kind
-  # run that a cancellation could clash with (see the "on" comment above).
+  # Stale PR/feature-branch runs can be cancelled. Preserve and queue every
+  # master push so an autorelease always has a completed Tests run for its
+  # exact commit, even when several merges land in quick succession.
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.ref != 'refs/heads/master' }}
+  queue: max
 
 # Every real job below (pytest/lint/docker-build/meta-lint/e2e/
 # codeql-analyze) is gated on the "skip-ci" PR label so a maintainer can
@@ -76,6 +76,7 @@ jobs:
   pytest:
     name: "pytest (${{ matrix.ha-version }})"
     runs-on: "ubuntu-latest"
+    timeout-minutes: 20
     needs: [detect-release]
     # Skips only in the one legitimate case: skip-ci is set AND
     # detect-release confirmed this is NOT a release. Every other
@@ -152,6 +153,7 @@ jobs:
 
   lint:
     runs-on: "ubuntu-latest"
+    timeout-minutes: 20
     needs: [detect-release]
     # See pytest's identical condition/comment above.
     if: *skip_unless_real_check
@@ -191,6 +193,7 @@ jobs:
     # rather than its Python code — separate job so a failure here doesn't
     # block on/get confused with the `lint` job's Python-specific tools.
     runs-on: "ubuntu-latest"
+    timeout-minutes: 15
     needs: [detect-release]
     # See pytest's identical condition/comment above.
     if: *skip_unless_real_check
@@ -220,6 +223,8 @@ jobs:
           chmod +x /tmp/hadolint
       - name: actionlint
         run: /tmp/actionlint -color .github/workflows/*.yaml
+      - name: Verify external action pins
+        run: python3 .github/scripts/check_action_pins.py
       - name: ShellCheck
         # Preinstalled on ubuntu-latest runners; covers every shell script in
         # the repo (docker/Dockerfile has no other shell to lint). Discovered
@@ -245,13 +250,12 @@ jobs:
     # know the scan has finished — no cross-workflow polling, and no
     # separate checks:read permission to query check-runs by SHA, both of
     # which were real sources of bugs the old design hit in practice.
-    # Trades away codeql.yml's weekly schedule (re-scans unchanged code
-    # against newer CodeQL query packs) and its push:master trigger —
-    # accepted deliberately: this workflow only runs on PR pushes, and
-    # tests.yaml already holds that master commits are covered by the PR
-    # that merged them (see this file's "on:" comment).
+    # CodeQL deliberately remains part of Tests rather than a separate
+    # scheduled workflow. Because Tests runs on every push, default-branch
+    # commits receive a first-class scan and appear in code-scanning results.
     if: *skip_unless_real_check
     runs-on: "ubuntu-latest"
+    timeout-minutes: 30
     permissions:
       security-events: write
       packages: read
@@ -309,10 +313,11 @@ jobs:
     # this job silently skipping.
     if: "needs.codeql-analyze.result == 'success' || needs.codeql-analyze.result == 'skipped'"
     runs-on: "ubuntu-latest"
+    timeout-minutes: 10
     permissions:
       security-events: read
     steps:
-      - name: Refuse if this PR has an open high/critical CodeQL alert
+      - name: Refuse if this ref has an open high/critical CodeQL alert
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
@@ -357,15 +362,15 @@ jobs:
     # starting. No trivy/SBOM here — those describe shipped artifacts, so
     # they live in release.yaml against the image actually being published.
     runs-on: "ubuntu-latest"
+    timeout-minutes: 20
     needs: [detect-release]
     # See pytest's identical condition/comment above.
     if: *skip_unless_real_check
     steps:
       - uses: "actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5" # v4.3.1
-      # Build/cache/smoke-test logic lives in this composite action, shared
-      # with autorelease.yaml's populate-docker-build-cache job — see its
-      # own comment for why a PR-scoped cache alone was never actually
-      # getting reused across PRs, and why that job exists.
+      # The master push run now seeds the base-branch cache that later PR
+      # refs can restore, while this composite keeps build/smoke/save behavior
+      # identical for every event.
       - uses: ./.github/actions/build-sidecar-image
       - uses: "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a" # v7.0.1
         with:
@@ -391,6 +396,7 @@ jobs:
     # coverage the old pre-build e2e had without giving up artifact fidelity.
     name: "e2e (${{ matrix.ha-version }})"
     runs-on: "ubuntu-latest"
+    timeout-minutes: 20
     # Needs pytest explicitly, not just transitively through docker-build:
     # docker-build no longer depends on pytest (see that job's comment), so
     # without this a failing unit suite wouldn't stop e2e from running.
@@ -467,9 +473,15 @@ jobs:
     # a spurious FAILURE from a run that's about to be discarded (as
     # happened once with the old always()-based version of this job).
     runs-on: "ubuntu-latest"
+    timeout-minutes: 5
     needs: [detect-release, pytest, lint, docker-build, meta-lint, e2e, codeql-analyze, codeql-gate]
     if: "!cancelled() && !(needs.detect-release.outputs.skip_ci == 'true' && needs.detect-release.outputs.is_release == 'false')"
     steps:
+      # Not .github/actions/refuse-skip-ci-on-release (which detect-release.yaml/
+      # hacs.yaml/hassfest.yaml use): a local composite action needs the repo
+      # checked out to resolve, and this job -- unlike those -- has no checkout
+      # step of its own; the loop below reads only `needs.*.result`. Adding a
+      # checkout solely to share these four lines would cost more than it saves.
       - name: Refuse skip-ci on a release PR
         if: needs.detect-release.outputs.is_release == 'true' && needs.detect-release.outputs.skip_ci == 'true'
         run: |

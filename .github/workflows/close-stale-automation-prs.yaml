@@ -1,27 +1,13 @@
-name: Close Stale Automation PRs
+name: Review Stale Automation PRs
 
-# Close bot/automation PRs after they have been open for at least seven days.
-# Branch refreshes deliberately do not postpone cleanup: PR Auto-merge keeps
-# every open PR current, including one whose checks can never pass, so using
-# GitHub's updatedAt timestamp here would keep a stuck PR alive indefinitely.
-# The weekly cadence means an eligible PR remains visible for 7-14 days.
+# Dependabot PRs are never closed here. GitHub treats a manual close as an
+# instruction not to recreate that update, which can silently suppress a
+# dependency or security fix. Stale Dependabot PRs are labelled for maintainer
+# attention instead. Only this repository's disposable aggregation branches
+# are recycled; their scheduled producer can safely open a fresh PR.
 #
-# Patch/minor and unclassified Dependabot PRs, plus our own dependency-update
-# branches, close once stale for any reason: failed checks, an unresolved
-# merge conflict, or auto-merge that could not be enabled. Confirmed major
-# Dependabot updates are exempt because they deliberately require review.
-#
-# One narrow exception to that major-version exemption is a PR whose failed CI
-# logs prove the known frozen-minimum-HA-floor resolver conflict. HA/phacc exact
-# pins are generated into dependabot.yml's security-group exclude-patterns,
-# not a global ignore list, so each blocked security update gets its own visible
-# PR. Once that PR reaches the same staleness threshold, it can be closed even
-# when it is a major update: the signature proves it cannot merge independently,
-# rather than merely indicating that nobody has reviewed it yet.
-#
-# Scheduled after dependency-updates.yaml (08:17), PR Auto-merge (08:22), and
-# min-ha-version-update.yaml (08:30) on Monday, so current automation has a
-# chance to refresh or merge its PR before cleanup runs.
+# Correctness does not depend on the relative start time of any other cron:
+# scheduled workflows can be delayed or dropped by GitHub.
 on:
   workflow_dispatch:
   schedule:
@@ -30,130 +16,92 @@ on:
 permissions: {}
 
 concurrency:
-  group: close-stale-automation-prs
+  group: review-stale-automation-prs
   cancel-in-progress: true
 
 jobs:
-  close-stale:
+  review-stale:
     runs-on: "ubuntu-latest"
+    timeout-minutes: 10
     permissions:
       contents: write
-      actions: read
+      issues: write
       pull-requests: write
     steps:
-      # Needed only to fetch .github/scripts/dependabot-bump-kind.sh -- this
-      # job otherwise works entirely through the gh API against
-      # $GITHUB_REPOSITORY, not the checked-out tree.
-      - uses: "actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5" # v4.3.1
-
-      - name: Close stale dependency-automation PRs
+      - name: Review stale dependency-automation PRs
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
 
-          close_pr() {
-            local pr="$1" head_ref="$2" reason="$3"
-            gh pr close "$pr" --repo "$REPO" --comment "$reason"
-            # Best-effort: Dependabot-owned branches sometimes can't be
-            # deleted by another actor even with contents: write, so this
-            # must never abort the loop the way `gh pr close --delete-branch`
-            # failing partway through did the first time this ran.
-            gh api "repos/$REPO/git/refs/heads/$head_ref" -X DELETE >/dev/null 2>&1 \
-              && echo "Deleted branch $head_ref." \
-              || echo "Could not delete branch $head_ref (leaving it; PR is already closed)."
-          }
+          gh label create automation-needs-attention --repo "$REPO" --force \
+            --color D93F0B \
+            --description "Automation update is blocked or has remained open unusually long"
 
-          prs="$(gh pr list --repo "$REPO" --state open --json number,author,headRefName,createdAt,title,body)"
+          prs="$(
+            gh pr list --repo "$REPO" --state open --limit 1000 \
+              --json number,author,headRefName,createdAt,labels
+          )"
 
           if [ "$(echo "$prs" | jq 'length')" = "0" ]; then
             echo "No open PRs."
             exit 0
           fi
 
-          echo "$prs" | jq -c '.[]' | while read -r pr; do
+          now="$(date +%s)"
+          while read -r pr; do
             number="$(echo "$pr" | jq -r .number)"
-            author="$(echo "$pr" | jq -r .author.login)"
+            author="$(echo "$pr" | jq -r '.author.login // ""')"
             head_ref="$(echo "$pr" | jq -r .headRefName)"
             created_at="$(echo "$pr" | jq -r .createdAt)"
-            title="$(echo "$pr" | jq -r .title)"
-            body="$(echo "$pr" | jq -r .body)"
+            created_epoch="$(date -d "$created_at" +%s)"
+            age_days=$(( (now - created_epoch) / 86400 ))
 
-            is_dependabot=0
-            if [ "$author" = "dependabot[bot]" ] || [ "$author" = "app/dependabot" ]; then
-              is_dependabot=1
-            fi
-            is_our_automation=0
-            if [ "$head_ref" = "automation/dependency-updates" ] || [ "$head_ref" = "automation/min-ha-version-update" ]; then
-              is_our_automation=1
+            is_dependabot=false
+            if [ "$author" = "dependabot[bot]" ] \
+              || [ "$author" = "app/dependabot" ]; then
+              is_dependabot=true
             fi
 
-            if [ "$is_dependabot" != "1" ] && [ "$is_our_automation" != "1" ]; then
+            is_ours=false
+            if [ "$head_ref" = "automation/dependency-updates" ] \
+              || [ "$head_ref" = "automation/min-ha-version-update" ]; then
+              is_ours=true
+            fi
+
+            if [ "$is_dependabot" != "true" ] && [ "$is_ours" != "true" ]; then
               continue
             fi
 
             echo "::group::PR #$number ($author, $head_ref)"
-
-            is_major=0
-            if [ "$is_dependabot" = "1" ] && [ "$(.github/scripts/dependabot-bump-kind.sh "$title" "$body")" = "major" ]; then
-              is_major=1
-            fi
-
-            now="$(date +%s)"
-            age_days=$(( ( now - $(date -d "$created_at" +%s) ) / 86400 ))
-            is_stale=0
-            if [ "$age_days" -ge 7 ]; then
-              is_stale=1
-            fi
-
-            if [ "$is_stale" = "1" ] && [ "$is_major" = "1" ]; then
-              echo "Open $age_days days, but this is a confirmed major-version bump — NOT closing as generic stale. Major bumps are deliberately left for a human merge decision (see dependabot-auto-merge.yaml); only a known-conflict-signature match below closes one automatically."
-            elif [ "$is_stale" = "1" ]; then
-              echo "Open $age_days days — closing as stale."
-              if [ "$is_dependabot" = "1" ]; then
-                reopen_note="Dependabot will reopen or recreate this on its own if the underlying update is still needed."
-              else
-                reopen_note="The next scheduled run of this automation will open a fresh PR reflecting whatever's current."
-              fi
-              close_pr "$number" "$head_ref" \
-                "Closing automatically: open at least 7 days without merging. PR branch refreshes do not postpone cleanup because they cannot make failing checks or incompatible constraints mergeable. $reopen_note"
+            if [ "$age_days" -lt 7 ]; then
+              echo "Open $age_days days — not stale."
               echo "::endgroup::"
               continue
             fi
 
-            if [ "$is_dependabot" != "1" ]; then
-              echo "Not yet stale, and not a dependabot PR (no conflict-signature check applies)."
+            if [ "$is_dependabot" = "true" ]; then
+              if ! echo "$pr" | jq -e \
+                '.labels[]?.name == "automation-needs-attention"' >/dev/null; then
+                gh pr edit "$number" --repo "$REPO" \
+                  --add-label automation-needs-attention
+                gh pr comment "$number" --repo "$REPO" --body \
+                  "This Dependabot PR has been open for at least seven days and needs maintainer attention. It is deliberately left open: closing a Dependabot PR prevents Dependabot from recreating that update. Resolve, supersede, or explicitly ignore the update rather than using stale cleanup."
+              fi
+              echo "Labelled for attention and left open."
               echo "::endgroup::"
               continue
             fi
 
-            job_urls="$(gh pr view "$number" --repo "$REPO" --json statusCheckRollup \
-              -q '.statusCheckRollup[]? | select(.conclusion == "FAILURE") | .detailsUrl // empty')"
+            gh pr close "$number" --repo "$REPO" --comment \
+              "Closing this stale repository-owned automation PR. Its next scheduled producer run will create a fresh branch and PR from the current dependency state."
 
-            matched=0
-            for url in $job_urls; do
-              job_id="$(echo "$url" | grep -oE '[0-9]+$' || true)"
-              [ -z "$job_id" ] && continue
-
-              log="$(gh run view --repo "$REPO" --job "$job_id" --log 2>/dev/null || true)"
-              if echo "$log" | grep -q "No solution found when resolving dependencies" \
-                 && echo "$log" | grep -q "homeassistant=="; then
-                matched=1
-                break
-              fi
-            done
-
-            if [ "$matched" = "1" ] && [ "$is_stale" = "1" ]; then
-              echo "PR #$number matches the known min-HA-version-floor conflict and is stale — closing."
-              close_pr "$number" "$head_ref" \
-                "Closing automatically after at least 7 days: this PR's CI failure is the known conflict between an isolated single-package bump and the frozen \`requirements_dev_min.txt\`/hacs.json HA-version floor — a transitive pin from that floor's homeassistant release disagrees with the version this PR wants. \`dependency-updates.yaml\`/\`min-ha-version-update.yaml\` resolve the whole dependency set together with \`uv\` on their own weekly schedule and supersede single-package bumps like this one; Dependabot will reopen or recreate this PR on its own if the conflict is somehow still unresolved after those run."
-            elif [ "$matched" = "1" ]; then
-              echo "PR #$number matches the known min-HA-version-floor conflict, but is only $age_days days old — leaving it visible until stale."
-            elif [ "$is_stale" = "1" ]; then
-              echo "PR #$number: no matching conflict signature found; left open only because it's a confirmed major-version bump awaiting manual review."
-            else
-              echo "PR #$number: no matching conflict signature found, leaving open (not yet stale)."
-            fi
+            # Best effort: the PR is already closed even if branch deletion
+            # is temporarily rejected.
+            gh api "repos/$REPO/git/refs/heads/$head_ref" -X DELETE \
+              >/dev/null 2>&1 \
+              && echo "Deleted branch $head_ref." \
+              || echo "Could not delete branch $head_ref; leaving it in place."
             echo "::endgroup::"
-          done
+          done < <(echo "$prs" | jq -c '.[]')

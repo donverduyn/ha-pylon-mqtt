@@ -1,21 +1,9 @@
 name: Build and cache the sidecar CI image
 description: >
-  Builds the sidecar Docker image (or restores it from cache if the
-  Dockerfile/runtime lockfile/src haven't changed), smoke-tests a freshly
-  built image, and leaves /tmp/pylon2mqtt-ci.tar.gz populated either way.
-  Shared by tests.yaml's docker-build job and autorelease.yaml's
-  populate-docker-build-cache job (which exists purely to seed a
-  master-scoped cache entry, since a PR-scoped cache is invisible to every
-  other PR's ref) -- both need the exact same build+smoke-test+cache
-  sequence, and a cached artifact must always have actually been
-  smoke-tested by whichever run first created it, so this can't be allowed
-  to drift into two independently maintained copies. Caller is responsible
-  for checking out the repo first.
-
-outputs:
-  cache-hit:
-    description: "Whether the image was restored from cache instead of freshly built and smoke-tested"
-    value: ${{ steps.image-cache.outputs.cache-hit }}
+  Builds the sidecar Docker image, smoke-tests newly built bytes, and leaves a
+  compressed image archive for the e2e jobs. Cache entries created by every
+  push include platform and architecture identity so master builds safely seed
+  the cache used by later PRs.
 
 runs:
   using: composite
@@ -45,7 +33,7 @@ runs:
       uses: "actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9" # v6.1.0
       with:
         path: /tmp/pylon2mqtt-ci.tar.gz
-        key: docker-image-${{ runner.os }}-${{ hashFiles('docker/Dockerfile', 'requirements_runtime.lock.txt', 'src/**') }}
+        key: docker-image-v2-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('docker/Dockerfile', 'requirements_runtime.lock.txt', 'src/**') }}
     - name: Build the sidecar image
       if: steps.image-cache.outputs.cache-hit != 'true'
       shell: bash
