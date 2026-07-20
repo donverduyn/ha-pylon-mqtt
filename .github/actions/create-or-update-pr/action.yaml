@@ -1,10 +1,7 @@
 name: Create or update automation PR
 description: >
-  Commits any working-tree changes to a dedicated branch, force-pushes it,
-  and opens a PR for that branch or edits one already open. Shared by
-  dependency-updates.yaml and min-ha-version-update.yaml, which previously
-  each carried an identical copy of this commit + push + find-or-create PR
-  sequence, differing only in branch name, commit message, and PR text.
+  Commits working-tree changes to a dedicated branch, pushes it using the
+  short-lived token supplied by the caller, and creates or updates the PR.
 
 inputs:
   branch:
@@ -24,11 +21,11 @@ inputs:
     description: "Slug of the GitHub App used as the commit author"
   gh-token:
     required: true
-    description: "Token used by git push and the gh CLI"
+    description: "Short-lived token used by git and the gh CLI"
 
 outputs:
   changed:
-    description: "'true' if there were working-tree changes to commit, 'false' otherwise"
+    description: "'true' if there were working-tree changes to commit"
     value: ${{ steps.commit.outputs.changed }}
 
 runs:
@@ -45,7 +42,9 @@ runs:
         PR_TITLE: ${{ inputs.pr-title }}
         PR_BODY: ${{ inputs.pr-body }}
       run: |
-        if git diff --quiet; then
+        set -euo pipefail
+
+        if [ -z "$(git status --porcelain)" ]; then
           echo "No changes found."
           echo "changed=false" >> "$GITHUB_OUTPUT"
           exit 0
@@ -54,12 +53,21 @@ runs:
         app_user_id="$(gh api "/users/${APP_SLUG}[bot]" --jq .id)"
         git config user.name "${APP_SLUG}[bot]"
         git config user.email "${app_user_id}+${APP_SLUG}[bot]@users.noreply.github.com"
+
+        # checkout uses persist-credentials:false. Configure gh's credential
+        # helper only in this final publication step, after dependency tools
+        # have finished, so the write token is not persisted during them.
+        gh auth setup-git
+
         git checkout -B "$BRANCH"
-        git add .
+        git add --all
         git commit -m "$COMMIT_MESSAGE"
         git push --force-with-lease origin "$BRANCH"
 
-        pr_number="$(gh pr list --head "$BRANCH" --state open --json number --jq '.[0].number // ""')"
+        pr_number="$(
+          gh pr list --head "$BRANCH" --state open \
+            --json number --jq '.[0].number // ""'
+        )"
         if [ -n "$pr_number" ]; then
           gh pr edit "$pr_number" --title "$PR_TITLE" --body "$PR_BODY"
         else

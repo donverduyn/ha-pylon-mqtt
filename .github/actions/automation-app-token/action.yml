@@ -1,0 +1,44 @@
+name: Mint automation app token
+description: >
+  Creates a short-lived installation token for the HA Pylontech MQTT
+  Automation GitHub App (see .github/AUTOMATION_APP.md), scoped to exactly
+  contents/pull-requests/workflows write. Shared by dependabot-auto-merge.yaml's
+  two jobs, which previously each carried an identical copy of this
+  actions/create-github-app-token call. Not used by dependency-updates.yaml
+  or min-ha-version-update.yaml, which each still carry their own inline
+  copy: their checkout step needs this token *before* it runs (so pushes
+  authenticate as the app), but a local composite action can't be referenced
+  until checkout has put the repo on disk -- see those workflows' own
+  comments on this step. client-id/private-key are passed in as inputs, not
+  read from vars/secrets here directly, matching create-or-update-pr's
+  gh-token input -- keeps this action's context access limited to what its
+  caller explicitly hands it.
+
+inputs:
+  client-id:
+    required: true
+    description: "The App's Client ID (repo variable AUTOMATION_APP_CLIENT_ID)"
+  private-key:
+    required: true
+    description: "The App's private key PEM (repo secret AUTOMATION_APP_PRIVATE_KEY)"
+
+outputs:
+  token:
+    description: "Installation token; use as GH_TOKEN / checkout's token input"
+    value: ${{ steps.app-token.outputs.token }}
+  app-slug:
+    description: "The App's slug, e.g. for git commit authorship as '<slug>[bot]'"
+    value: ${{ steps.app-token.outputs.app-slug }}
+
+runs:
+  using: composite
+  steps:
+    - name: Create GitHub App token
+      id: app-token
+      uses: "actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1" # v3.2.0
+      with:
+        client-id: ${{ inputs.client-id }}
+        private-key: ${{ inputs.private-key }}
+        permission-contents: write
+        permission-pull-requests: write
+        permission-workflows: write

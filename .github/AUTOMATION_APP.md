@@ -26,15 +26,16 @@ repository.
 
 ## Actions configuration
 
-Configure these under **Settings → Secrets and variables → Actions**:
+Configure the App Client ID as repository variable
+`AUTOMATION_APP_CLIENT_ID`. Create an Actions environment named
+`automation`, restrict its deployment branches to the default branch, and
+store the complete private-key PEM as environment secret
+`AUTOMATION_APP_PRIVATE_KEY`.
 
-- Repository variable `AUTOMATION_APP_CLIENT_ID`: the App's Client ID
-- Repository secret `AUTOMATION_APP_PRIVATE_KEY`: the complete contents of a
-  private key PEM generated in the GitHub App settings
-
-Do not commit the private key or put it in `secrets.env`. The workflows use
-`actions/create-github-app-token` to mint a repository-scoped, short-lived
-installation token and explicitly limit its permissions.
+Do not also keep the private key as a repository secret: a repository secret
+would bypass the environment's branch restriction. Do not commit it or put it
+in `secrets.env`. The workflows mint repository-scoped, short-lived
+installation tokens and expose them to git only in the final publication step.
 
 ## Verification and migration
 

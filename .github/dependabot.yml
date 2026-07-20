@@ -24,11 +24,9 @@ updates:
     # merging several independent PRs in sequence. Trade-off: if the
     # bundle fails *our* CI (a real behavioral incompatibility Dependabot's
     # resolution check can't see), the whole group is blocked together,
-    # not just the offending package — accepted because everything this
-    # applies to is predominantly dev-scope, and
-    # close-stale-automation-prs.yaml already closes a stuck PR after 7
-    # days regardless of cause, so a bad group self-clears rather than
-    # blocking forever.
+    # not just the offending package. The stale-automation workflow leaves
+    # blocked Dependabot PRs open and labels them for maintainer attention;
+    # closing one would prevent Dependabot from recreating that update.
     groups:
       security-updates:
         applies-to: security-updates
@@ -43,8 +41,8 @@ updates:
         # exactly by the currently locked homeassistant/phacc releases. It is
         # excluded from this group, not globally ignored, so Dependabot opens
         # an individual security PR that exposes the blocked dependency. The
-        # stale-automation workflow keeps that PR visible for at least seven
-        # days before closing a confirmed HA-floor conflict.
+        # stale-automation workflow keeps that PR visible and labels it for
+        # maintainer attention if the HA floor still blocks it.
         exclude-patterns:
         # <dependabot-exclude-generated>
         - "aiodns"
@@ -146,6 +144,9 @@ updates:
       # major action updates remain individual PRs for review. This also
       # preserves atomic CodeQL init/analyze updates for their usual patch
       # releases; tests.yaml requires both subpaths to use the same version.
+      # Dependabot does not scan .github/actions/** metadata. meta-lint's
+      # check_action_pins.py therefore fails if a workflow update leaves a
+      # composite action on a different commit of the same upstream action.
       github-actions:
         patterns:
           - "*"
